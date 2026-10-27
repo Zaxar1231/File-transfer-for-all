@@ -143,10 +143,10 @@ class SshTerminal:
                         self.title = self.screen.title
                     replies = self._pending_replies()
                 for reply in replies:  # e.g. the cursor position some programs ask for
-                    self._channel.sendall(reply)
+                    self.send(reply)
                 self.on_change()
-        except OSError as exc:
-            reason = f"соединение потеряно: {exc}"
+        except (OSError, EOFError) as exc:
+            reason = f"соединение потеряно: {exc or type(exc).__name__}"
         finally:
             self.closed = True
             if self._client is not None:
@@ -163,7 +163,7 @@ class SshTerminal:
             return
         try:
             self._channel.sendall(data.encode() if isinstance(data, str) else data)
-        except OSError:
+        except (OSError, EOFError):
             logger.debug("terminal write after disconnect", exc_info=True)
 
     def resize(self, cols: int, rows: int) -> None:
@@ -175,16 +175,19 @@ class SshTerminal:
         if self.connected:
             try:
                 self._channel.resize_pty(width=cols, height=rows)
-            except OSError:
+            except (OSError, EOFError):
                 pass
         self.on_change()
 
     def close(self) -> None:
+        """Safe at any time, also after the server or the reader thread already hung up."""
         self.closed = True
-        if self._channel is not None:
-            self._channel.close()
-        if self._client is not None:
-            self._client.close()
+        for resource in (self._channel, self._client):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception:  # noqa: BLE001 - EOFError, socket errors: it is closed either way
+                    logger.debug("closing a terminal that is already gone", exc_info=True)
 
     # --- screen ------------------------------------------------------------------------
 

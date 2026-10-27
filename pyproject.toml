@@ -47,6 +47,7 @@ Issues = "https://github.com/Zaxar1231/File-transfer-for-all/issues"
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-timeout>=2.3",  # a hung network test fails with its stack instead of blocking CI
     # in-process servers for the protocol tests
     "pyftpdlib>=1.5.9",
     "wsgidav>=4.3",
@@ -66,6 +67,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+timeout = 120
+timeout_method = "thread"
 
 # --- flet build (Windows, macOS, Linux, Android, iOS) ---------------------------
 

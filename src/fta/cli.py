@@ -351,6 +351,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     from fta.core import hostkeys
 
     args = build_parser().parse_args(argv)
+    # `fta serve` and `fta receive` run for hours: their status lines must reach a pipe or
+    # a service log at once, not when an 8 KiB buffer fills.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     hostkeys.DEFAULT_PATH = default_data_dir() / "known_hosts"
     while True:
         try:
