@@ -1,5 +1,9 @@
 # fta — File Transfer for All
 
+[![CI](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml/badge.svg)](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Универсальный инструмент для передачи файлов: один API и одна команда для всех протоколов.
 Ядро ничего не знает о конкретных протоколах. Каждый протокол — это отдельный плагин
 (класс `Transport`), который регистрируется под одной или несколькими URL-схемами.
@@ -110,3 +114,19 @@ myproto = "my_pkg.transport:MyTransport"
   обнаружение в LAN) не укладываются в модель «путь → путь». Для них понадобится
   второй интерфейс, например `send(file)` / `receive(code)`.
 - Для SFTP, S3 и других заглушек нужны опциональные зависимости: `pip install -e ".[sftp,s3]"`.
+
+## Разработка
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+Перед открытием PR убедитесь, что тесты проходят. CI запускает их на Python 3.10–3.13.
+Новый протокол — это новый модуль в `src/fta/transports/` и тесты, которые не ходят в сеть
+(см. `tests/test_manager.py`, там описан in-memory транспорт).
+
+## Лицензия
+
+[MIT](LICENSE)
