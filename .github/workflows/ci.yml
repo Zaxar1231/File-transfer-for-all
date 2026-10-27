@@ -24,7 +24,7 @@ jobs:
           cache: pip
 
       - name: Install Samba and PuTTY tools for the SMB and SSH server tests
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends samba putty-tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends samba putty-tools rclone
 
       - name: Install
         run: pip install -e ".[dev]"

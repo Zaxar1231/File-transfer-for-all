@@ -10,6 +10,7 @@ from fta.app.storage import DEFAULT_PORTS, PROTOCOLS, Connection
 from fta.app.ui import empty_state, headline, protocol_icon, safe_update
 from fta.core.hostkeys import HostKeyChanged, UnknownHostKey
 from fta.core.registry import open_transport
+from fta.tools import rclone
 
 if TYPE_CHECKING:
     from fta.app.main import App
@@ -22,12 +23,13 @@ class ConnectionsView:
         self.empty = empty_state(
             ft.Icons.DNS_OUTLINED,
             "Нет сохранённых подключений",
-            "Добавьте сервер SFTP, FTP, WebDAV или бакет S3, чтобы работать с ним на вкладке «Файлы», "
-            "или подключитесь сразу по IP-адресу",
+            "Добавьте сервер SFTP, FTP, WebDAV, бакет S3 или облако (Google Drive, Dropbox, "
+            "Яндекс.Диск), чтобы работать с ним на вкладке «Файлы», или подключитесь сразу по IP-адресу",
             ft.Row(
                 [
                     ft.FilledButton("Добавить подключение", icon=ft.Icons.ADD, on_click=lambda e: self.edit()),
                     ft.FilledTonalButton("По IP", icon=ft.Icons.LAN_OUTLINED, on_click=lambda e: self.app.quick_connect()),
+                    ft.FilledTonalButton("Облако", icon=ft.Icons.CLOUD_OUTLINED, on_click=lambda e: self.add_cloud()),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 wrap=True,
@@ -38,6 +40,7 @@ class ConnectionsView:
                 headline(
                     "Подключения",
                     ft.FilledTonalButton("По IP", icon=ft.Icons.LAN_OUTLINED, on_click=lambda e: self.app.quick_connect()),
+                    ft.FilledTonalButton("Облако", icon=ft.Icons.CLOUD_OUTLINED, on_click=lambda e: self.add_cloud()),
                     ft.FilledButton("Добавить", icon=ft.Icons.ADD, on_click=lambda e: self.edit()),
                 ),
                 self.list,
@@ -89,8 +92,16 @@ class ConnectionsView:
                             if connection.scheme == "sftp"
                             else []
                         ),
-                        ft.PopupMenuItem(
-                            content="Изменить", icon=ft.Icons.EDIT_OUTLINED, on_click=lambda e, c=connection: self.edit(c)
+                        *(
+                            []
+                            if connection.scheme == "rclone"  # its settings live in rclone's config
+                            else [
+                                ft.PopupMenuItem(
+                                    content="Изменить",
+                                    icon=ft.Icons.EDIT_OUTLINED,
+                                    on_click=lambda e, c=connection: self.edit(c),
+                                )
+                            ]
                         ),
                         ft.PopupMenuItem(
                             content="Удалить", icon=ft.Icons.DELETE_OUTLINE, on_click=lambda e, c=connection: self._remove(c)
@@ -101,6 +112,11 @@ class ConnectionsView:
                 content_padding=ft.Padding.symmetric(horizontal=16, vertical=4),
             ),
         )
+
+    def add_cloud(self) -> None:
+        from fta.app.views.cloud import CloudDialog
+
+        CloudDialog(self.app).show()
 
     def edit(self, connection: Connection | None = None) -> None:
         ConnectionDialog(self.app, connection, on_saved=self._saved).show()
@@ -113,6 +129,11 @@ class ConnectionsView:
         def remove(_: ft.Event[ft.Control]) -> None:
             self.app.page.pop_dialog()
             self.app.store.remove(connection.id)
+            if connection.scheme == "rclone" and connection.host in rclone.app_remotes():
+                try:
+                    rclone.delete_remote(connection.host)  # signs the app out of that cloud
+                except Exception:  # noqa: BLE001 - the connection is gone either way
+                    pass
             self.app.connections_changed()
 
         self.app.page.show_dialog(

@@ -61,6 +61,9 @@ class App:
         from fta.core import hostkeys
 
         hostkeys.DEFAULT_PATH = self.store.data_dir / "known_hosts"
+        from fta.tools import rclone
+
+        rclone.DATA_DIR = self.store.data_dir
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service

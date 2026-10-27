@@ -19,6 +19,8 @@ class Endpoint:
     password: str | None
     path: str
     query: str = ""
+    host_as_written: str | None = None
+    """The host with its original letter case; rclone remote names are case-sensitive."""
 
     @classmethod
     def parse(cls, location: str) -> Endpoint:
@@ -33,6 +35,7 @@ class Endpoint:
             password=unquote(parts.password) if parts.password else None,
             path=unquote(parts.path),
             query=parts.query,
+            host_as_written=unquote(parts.netloc.rpartition("@")[2].split(":")[0]) or None,
         )
 
     @property

@@ -16,6 +16,7 @@ PROTOCOL_ICONS = {
     "s3": ft.Icons.CLOUD_QUEUE,
     "http": ft.Icons.PUBLIC,
     "https": ft.Icons.PUBLIC,
+    "rclone": ft.Icons.CLOUD_SYNC_OUTLINED,
 }
 
 SEED_COLORS = {

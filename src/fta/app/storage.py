@@ -74,6 +74,10 @@ class Connection:
 
     @property
     def label(self) -> str:
+        if self.scheme == "rclone":
+            from fta.tools.rclone import PROVIDERS
+
+            return PROVIDERS.get(self.options.get("provider", ""), "Облако (rclone)")
         return PROTOCOLS.get(self.scheme, self.scheme.upper())
 
     def to_json(self) -> dict[str, Any]:
