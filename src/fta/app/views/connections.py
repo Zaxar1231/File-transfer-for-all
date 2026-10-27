@@ -188,6 +188,10 @@ class ConnectionDialog:
         self.username.label = "Access key ID (необязательно)" if s3 else "Пользователь"
         self.password.label = "Secret access key" if s3 else "Пароль"
         self.key_file.visible = self.accept_host.visible = scheme == "sftp"
+        smb = scheme == "smb"
+        self.path.label = "Общий ресурс и папка" if smb else "Начальная папка"
+        self.path.hint_text = "/share/папка" if smb else None
+        self.username.hint_text = "ДОМЕН\\пользователь" if smb else None
         self.endpoint_url.visible = self.region.visible = s3
         try:
             self.dialog.update()
@@ -199,6 +203,11 @@ class ConnectionDialog:
         for field in (self.name, self.host):
             field.error = None if (field.value or "").strip() else "Обязательное поле"
             errors |= field.error is not None
+        if self.scheme.value == "smb" and not (self.path.value or "").strip("/ "):
+            self.path.error = "Укажите общий ресурс, например /public"
+            errors = True
+        else:
+            self.path.error = None
         if errors:
             self.dialog.update()
             return None

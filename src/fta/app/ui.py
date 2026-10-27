@@ -8,6 +8,7 @@ import flet as ft
 
 PROTOCOL_ICONS = {
     "sftp": ft.Icons.TERMINAL,
+    "smb": ft.Icons.LAN_OUTLINED,
     "ftp": ft.Icons.FOLDER_COPY_OUTLINED,
     "ftps": ft.Icons.FOLDER_COPY_OUTLINED,
     "dav": ft.Icons.CLOUD_OUTLINED,

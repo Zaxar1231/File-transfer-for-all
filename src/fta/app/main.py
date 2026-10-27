@@ -13,12 +13,13 @@ from fta.app.views.browser import BrowserView
 from fta.app.views.connections import ConnectionsView
 from fta.app.views.settings import SettingsView
 from fta.app.views.transfers import TransfersView
+from fta.app.views.update import Updater
 
 APP_TITLE = "File Transfer for All"
 COMPACT_WIDTH = 720
 """Below this width the app uses the phone layout (Material 3 "compact" + "medium" classes)."""
 
-NEEDS_PASSWORD = {"sftp", "ftp", "ftps", "dav", "davs", "http", "https"}
+NEEDS_PASSWORD = {"sftp", "smb", "ftp", "ftps", "dav", "davs", "http", "https"}
 
 _THEME_MODES = {"system": ft.ThemeMode.SYSTEM, "light": ft.ThemeMode.LIGHT, "dark": ft.ThemeMode.DARK}
 
@@ -44,6 +45,7 @@ class App:
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service
+        self.updater = Updater(self)
         self.browser = BrowserView(self)
         self.transfers = TransfersView(self)
         self.connections = ConnectionsView(self)
@@ -95,6 +97,8 @@ class App:
             )
         )
         self.layout()
+        if self.store.settings.check_updates:
+            self.updater.check_in_background(silent=True)
 
     # --- layout and navigation ------------------------------------------------------
 

@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
+from fta import __version__
 from fta.app.storage import PROTOCOLS
 from fta.app.ui import SEED_COLORS, headline
+from fta.app.updates import RELEASES_PAGE
 
 if TYPE_CHECKING:
     from fta.app.main import App
@@ -59,6 +61,9 @@ class SettingsView:
         self.show_hidden = ft.Switch(
             label="Показывать скрытые файлы", value=settings.show_hidden, on_change=self._on_show_hidden
         )
+        self.check_updates = ft.Switch(
+            label="Проверять обновления при запуске", value=settings.check_updates, on_change=self._on_check_updates
+        )
         self._render_swatches()
 
         self.view = ft.Column(
@@ -78,6 +83,22 @@ class SettingsView:
                             self.show_hidden,
                             ft.Text("Одновременных передач"),
                             self.parallel,
+                        ),
+                        _section(
+                            "Обновления",
+                            ft.Text(f"Установлена версия {__version__}"),
+                            self.check_updates,
+                            ft.Row(
+                                [
+                                    ft.FilledTonalButton(
+                                        "Проверить сейчас",
+                                        icon=ft.Icons.SYSTEM_UPDATE,
+                                        on_click=lambda e: app.updater.check_in_background(silent=False),
+                                    ),
+                                    ft.TextButton("Все версии", icon=ft.Icons.OPEN_IN_NEW, url=RELEASES_PAGE),
+                                ],
+                                wrap=True,
+                            ),
                         ),
                         _section(
                             "О приложении",
@@ -136,6 +157,10 @@ class SettingsView:
     def _on_parallel(self, e: ft.Event[ft.SegmentedButton]) -> None:
         self.app.store.settings.parallel_transfers = int(e.control.selected[0])
         self.app.queue.set_parallel(self.app.store.settings.parallel_transfers)
+        self.app.store.save()
+
+    def _on_check_updates(self, e: ft.Event[ft.Switch]) -> None:
+        self.app.store.settings.check_updates = bool(e.control.value)
         self.app.store.save()
 
     def _on_show_hidden(self, e: ft.Event[ft.Switch]) -> None:

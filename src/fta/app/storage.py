@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 PROTOCOLS: dict[str, str] = {
     "sftp": "SFTP",
+    "smb": "SMB (Windows, Samba, NAS)",
     "ftp": "FTP",
     "ftps": "FTPS",
     "davs": "WebDAV (HTTPS)",
@@ -23,7 +24,7 @@ PROTOCOLS: dict[str, str] = {
     "http": "HTTP",
 }
 
-DEFAULT_PORTS = {"sftp": 22, "ftp": 21, "ftps": 21, "dav": 80, "davs": 443, "http": 80, "https": 443}
+DEFAULT_PORTS = {"sftp": 22, "smb": 445, "ftp": 21, "ftps": 21, "dav": 80, "davs": 443, "http": 80, "https": 443}
 
 LOCAL_ID = "local"
 """Connection id that stands for this device's own filesystem."""
@@ -83,6 +84,8 @@ class Settings:
     parallel_transfers: int = 2
     show_hidden: bool = False
     """Show files whose names start with a dot."""
+    check_updates: bool = True
+    """Look for a newer release on GitHub at start-up."""
 
 
 def default_data_dir() -> Path:

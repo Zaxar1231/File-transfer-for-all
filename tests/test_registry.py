@@ -57,7 +57,7 @@ def test_plain_paths_open_the_local_transport(tmp_path):
         assert transport.stat(str(tmp_path)).is_dir
 
 
-def test_planned_protocol_fails_clearly_on_connect():
-    with pytest.raises(UnsupportedOperation, match="not implemented"):
-        with open_transport("smb://host/share/file"):
-            pass
+def test_transport_without_an_operation_says_so(tmp_path):
+    with open_transport("http://example.invalid/") as transport:
+        with pytest.raises(UnsupportedOperation, match="cannot list"):
+            transport.listdir("/")
