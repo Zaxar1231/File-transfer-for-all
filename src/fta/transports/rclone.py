@@ -86,15 +86,20 @@ class RcloneTransport(Transport):
                 while chunk := reader.read(CHUNK_SIZE):
                     process.stdin.write(chunk)
                     tracker.advance(len(chunk))
-            process.stdin.close()
         except BrokenPipeError:
             pass  # rclone stopped reading; its error message says why
         except BaseException:
             process.kill()
             process.wait()
             raise
-        _, stderr = process.communicate()
-        if process.returncode != 0:
+        finally:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+        # Not communicate(): before Python 3.13 it flushes the stdin we just closed and fails.
+        stderr = process.stderr.read()
+        if process.wait() != 0:
             raise TransferError(f"rclone upload to {self.remote}:{remote}: {rclone._message(stderr)}")
 
     def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
