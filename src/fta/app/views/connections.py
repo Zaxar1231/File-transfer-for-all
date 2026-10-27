@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from fta.app.storage import DEFAULT_PORTS, PROTOCOLS, Connection
-from fta.app.ui import empty_state, headline, protocol_icon
+from fta.app.ui import empty_state, headline, protocol_icon, safe_update
+from fta.core.hostkeys import HostKeyChanged, UnknownHostKey
 from fta.core.registry import open_transport
 
 if TYPE_CHECKING:
@@ -21,12 +22,24 @@ class ConnectionsView:
         self.empty = empty_state(
             ft.Icons.DNS_OUTLINED,
             "Нет сохранённых подключений",
-            "Добавьте сервер SFTP, FTP, WebDAV или бакет S3, чтобы работать с ним на вкладке «Файлы»",
-            ft.FilledButton("Добавить подключение", icon=ft.Icons.ADD, on_click=lambda e: self.edit()),
+            "Добавьте сервер SFTP, FTP, WebDAV или бакет S3, чтобы работать с ним на вкладке «Файлы», "
+            "или подключитесь сразу по IP-адресу",
+            ft.Row(
+                [
+                    ft.FilledButton("Добавить подключение", icon=ft.Icons.ADD, on_click=lambda e: self.edit()),
+                    ft.FilledTonalButton("По IP", icon=ft.Icons.LAN_OUTLINED, on_click=lambda e: self.app.quick_connect()),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                wrap=True,
+            ),
         )
         self.view = ft.Column(
             [
-                headline("Подключения", ft.FilledButton("Добавить", icon=ft.Icons.ADD, on_click=lambda e: self.edit())),
+                headline(
+                    "Подключения",
+                    ft.FilledTonalButton("По IP", icon=ft.Icons.LAN_OUTLINED, on_click=lambda e: self.app.quick_connect()),
+                    ft.FilledButton("Добавить", icon=ft.Icons.ADD, on_click=lambda e: self.edit()),
+                ),
                 self.list,
                 self.empty,
             ],
@@ -64,6 +77,17 @@ class ConnectionsView:
                             content="Открыть в файлах",
                             icon=ft.Icons.FOLDER_OPEN_OUTLINED,
                             on_click=lambda e, c=connection: self.app.open_in_browser(c),
+                        ),
+                        *(
+                            [
+                                ft.PopupMenuItem(
+                                    content="Терминал",
+                                    icon=ft.Icons.TERMINAL,
+                                    on_click=lambda e, c=connection: self.app.open_terminal(c),
+                                )
+                            ]
+                            if connection.scheme == "sftp"
+                            else []
                         ),
                         ft.PopupMenuItem(
                             content="Изменить", icon=ft.Icons.EDIT_OUTLINED, on_click=lambda e, c=connection: self.edit(c)
@@ -134,7 +158,7 @@ class ConnectionDialog:
             label="Файл ключа SSH", helper="Необязательно", value=c.options.get("key_file", "")
         )
         self.accept_host = ft.Switch(
-            label="Доверять новому ключу сервера", value=c.options.get("accept_unknown_host") == "true"
+            label="Доверять новому ключу сервера без вопроса", value=c.options.get("accept_unknown_host") == "true"
         )
         self.endpoint_url = ft.TextField(
             label="Endpoint URL (для MinIO, R2 и т. п.)", value=c.options.get("endpoint_url", "")
@@ -257,6 +281,10 @@ class ConnectionDialog:
             try:
                 with open_transport(connection.url(), **connection.transport_options()) as transport:
                     transport.stat(connection.path)
+            except (UnknownHostKey, HostKeyChanged) as exc:
+                self.test_result.value = "Подтвердите ключ сервера и проверьте ещё раз"
+                self.test_result.color = ft.Colors.ON_SURFACE_VARIANT
+                self.app.confirm_host_key(exc, then=lambda: self._test(e))
             except Exception as exc:  # shown in the dialog
                 self.test_result.value = f"Не удалось: {exc}"
                 self.test_result.color = ft.Colors.ERROR
@@ -270,3 +298,135 @@ class ConnectionDialog:
                 pass  # the dialog was closed meanwhile
 
         self.app.page.run_thread(worker)
+
+
+QUICK_PROTOCOLS = {
+    "sftp": "SSH / SFTP",
+    "smb": "SMB",
+    "ftp": "FTP",
+    "dav": "WebDAV",
+}
+
+
+def split_address(text: str, default_port: int | None) -> tuple[str, int | None]:
+    """``192.168.1.5``, ``nas.local:2222`` or ``[fe80::1]:22`` → host and port."""
+    text = text.strip()
+    if text.startswith("["):
+        host, _, rest = text[1:].partition("]")
+        return host, int(rest[1:]) if rest.startswith(":") and rest[1:].isdigit() else default_port
+    if text.count(":") == 1:
+        host, port = text.split(":")
+        if port.isdigit():
+            return host, int(port)
+    return text, default_port
+
+
+class QuickConnectDialog:
+    """Open a server by its address right away: files, or a terminal for SSH. Saving is optional."""
+
+    def __init__(
+        self,
+        app: App,
+        host: str = "",
+        port: int | None = None,
+        scheme: str = "sftp",
+        username: str = "",
+        name: str = "",
+    ) -> None:
+        self.app = app
+        self.name = name
+        self.scheme = ft.SegmentedButton(
+            segments=[ft.Segment(value=key, label=ft.Text(label)) for key, label in QUICK_PROTOCOLS.items()],
+            selected=[scheme],
+            on_change=lambda e: self._adapt(),
+        )
+        address = f"{host}:{port}" if host and port and port != DEFAULT_PORTS.get(scheme) else host
+        self.address = ft.TextField(
+            label="IP-адрес или имя",
+            value=address,
+            hint_text="192.168.1.20 или nas.local:2222",
+            autofocus=not host,
+            keyboard_type=ft.KeyboardType.URL,
+            on_submit=lambda e: self._files(e),
+        )
+        self.username = ft.TextField(label="Пользователь", value=username, autofocus=bool(host) and not username)
+        self.password = ft.TextField(
+            label="Пароль",
+            password=True,
+            can_reveal_password=True,
+            autofocus=bool(host and username),
+            on_submit=lambda e: self._primary(e),
+        )
+        self.path = ft.TextField(label="Общий ресурс", hint_text="/public")
+        self.save = ft.Checkbox(label="Сохранить в подключениях")
+        self.terminal_button = ft.FilledButton("Терминал", icon=ft.Icons.TERMINAL, on_click=self._terminal)
+        self.dialog = ft.AlertDialog(
+            icon=ft.Icon(ft.Icons.LAN_OUTLINED),
+            title=ft.Text("Подключиться по адресу"),
+            content=ft.Column(
+                [self.scheme, self.address, self.username, self.password, self.path, self.save],
+                tight=True,
+                spacing=12,
+                width=440,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
+            actions=[
+                ft.TextButton("Отмена", on_click=lambda e: self.app.page.pop_dialog()),
+                ft.FilledTonalButton("Файлы", icon=ft.Icons.FOLDER_OPEN_OUTLINED, on_click=self._files),
+                self.terminal_button,
+            ],
+        )
+        self._adapt()
+
+    def show(self) -> None:
+        self.app.page.show_dialog(self.dialog)
+
+    def _adapt(self) -> None:
+        scheme = self.scheme.selected[0]
+        self.terminal_button.visible = scheme == "sftp"
+        self.path.visible = scheme == "smb"
+        self.username.hint_text = "ДОМЕН\\пользователь" if scheme == "smb" else None
+        try:
+            self.dialog.update()
+        except (RuntimeError, AssertionError):
+            pass
+
+    def _build(self) -> Connection | None:
+        scheme = self.scheme.selected[0]
+        host, port = split_address(self.address.value or "", None)
+        self.address.error = None if host else "Укажите адрес"
+        share = (self.path.value or "").strip().strip("/")
+        self.path.error = "Укажите общий ресурс, например /public" if scheme == "smb" and not share else None
+        if self.address.error or self.path.error:
+            safe_update(self.dialog)
+            return None
+        connection = Connection(
+            name=self.name or (f"{self.username.value}@{host}" if self.username.value else host),
+            scheme=scheme,
+            host=host,
+            port=port,
+            username=(self.username.value or "").strip(),
+            password=self.password.value or "",
+            path=f"/{share}" if scheme == "smb" else "/",
+        )
+        if self.save.value:
+            self.app.store.upsert(connection)
+            self.app.connections_changed()
+        else:
+            connection = self.app.store.add_temporary(connection)
+        return connection
+
+    def _files(self, e: ft.Event[ft.Control]) -> None:
+        connection = self._build()
+        if connection:
+            self.app.page.pop_dialog()
+            self.app.open_in_browser(connection, refresh=True)
+
+    def _terminal(self, e: ft.Event[ft.Control]) -> None:
+        connection = self._build()
+        if connection:
+            self.app.page.pop_dialog()
+            self.app.terminal.open(connection)
+
+    def _primary(self, e: ft.Event[ft.Control]) -> None:
+        (self._terminal if self.scheme.selected[0] == "sftp" else self._files)(e)

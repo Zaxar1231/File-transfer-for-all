@@ -12,7 +12,7 @@ from urllib.parse import quote, urlunsplit
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
-from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, copy_stream
+from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, copy_stream, open_for_resume
 
 
 @register
@@ -20,6 +20,7 @@ class HttpTransport(Transport):
     """Uploads need a server that accepts PUT. Options: username, password, timeout."""
 
     schemes = ("http", "https")
+    can_resume_download = True  # Range requests; servers that ignore Range get a full restart
 
     @property
     def http_scheme(self) -> str:
@@ -31,11 +32,16 @@ class HttpTransport(Transport):
     def close(self) -> None:
         """Nothing to release."""
 
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
-        with self._send(remote) as response, local.open("wb") as out:
-            copy_stream(response, out, Progress(progress, _int_header(response, "Content-Length")))
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        headers = {"Range": f"bytes={offset}-"} if offset else None
+        with self._send(remote, headers=headers) as response:
+            if offset and response.status != 206:
+                offset = 0  # the server ignored Range and sends the whole file
+            length = _int_header(response, "Content-Length")
+            with open_for_resume(local, offset) as out:
+                copy_stream(response, out, Progress(progress, offset + length if length is not None else None, offset))
 
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
         size = local.stat().st_size
         with local.open("rb") as fp:
             data = Progress(progress, size).wrap_reader(fp)

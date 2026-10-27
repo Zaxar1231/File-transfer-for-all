@@ -11,7 +11,15 @@ from typing import Any
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
-from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, translate_errors
+from fta.core.transport import (
+    Progress,
+    ProgressCallback,
+    RemoteEntry,
+    Transport,
+    copy_stream,
+    open_for_resume,
+    translate_errors,
+)
 
 _MISSING_CODES = ("404", "NoSuchKey", "NotFound")
 
@@ -25,6 +33,7 @@ class S3Transport(Transport):
     """
 
     schemes = ("s3",)
+    can_resume_download = True  # ranged GET; S3 objects cannot be appended to
 
     _client: Any = None
     _client_error: Any = None
@@ -58,14 +67,19 @@ class S3Transport(Transport):
         return self.endpoint.host or ""
 
     @translate_errors
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
         tracker = Progress(progress, local.stat().st_size)
         self._session.upload_file(str(local), self.bucket, _key(remote), Callback=tracker.advance)
 
     @translate_errors
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
-        tracker = Progress(progress, self.stat(remote).size)
-        self._session.download_file(self.bucket, _key(remote), str(local), Callback=tracker.advance)
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        tracker = Progress(progress, self.stat(remote).size, done=offset)
+        if not offset:
+            self._session.download_file(self.bucket, _key(remote), str(local), Callback=tracker.advance)
+            return
+        response = self._session.get_object(Bucket=self.bucket, Key=_key(remote), Range=f"bytes={offset}-")
+        with open_for_resume(local, offset) as out:
+            copy_stream(response["Body"], out, tracker)
 
     @translate_errors
     def listdir(self, remote: str) -> list[RemoteEntry]:

@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import flet as ft
 
-from fta.app.storage import Connection, Store
+from fta.app.storage import Connection, Store, setup_logging
 from fta.app.transfers import TransferQueue
+from fta.core.journal import Journal
 from fta.app.ui import safe_update
 from fta.app.views.browser import BrowserView
 from fta.app.views.connections import ConnectionsView
+from fta.app.views.nearby import NearbyView, offer_text
 from fta.app.views.settings import SettingsView
+from fta.app.views.terminal import TerminalView
 from fta.app.views.transfers import TransfersView
 from fta.app.views.update import Updater
 
 APP_TITLE = "File Transfer for All"
+MONO_FONT = "FtaMono"
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+"""src/assets in a checkout and in `flet build`; a pip install has none and uses system fonts."""
 COMPACT_WIDTH = 720
 """Below this width the app uses the phone layout (Material 3 "compact" + "medium" classes)."""
 
@@ -26,6 +33,7 @@ _THEME_MODES = {"system": ft.ThemeMode.SYSTEM, "light": ft.ThemeMode.LIGHT, "dar
 _SECTIONS = (
     ("Файлы", ft.Icons.FOLDER_OUTLINED, ft.Icons.FOLDER),
     ("Передачи", ft.Icons.SWAP_VERT, ft.Icons.SWAP_VERT),
+    ("Рядом", ft.Icons.WIFI_TETHERING, ft.Icons.WIFI_TETHERING),
     ("Подключения", ft.Icons.DNS_OUTLINED, ft.Icons.DNS),
     ("Настройки", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS),
 )
@@ -35,25 +43,40 @@ class App:
     def __init__(self, page: ft.Page, store: Store | None = None) -> None:
         self.page = page
         self.store = store or Store()
-        self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers)
+        self.log_path = setup_logging(self.store.data_dir, self.store.settings.log_level)
+        self.journal = Journal(self.store.data_dir / "journal.jsonl")
+        self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers, journal=self.journal)
         self._asked_password: set[str] = set()
         self.index = 0
+        self.server = None
+        self.server_error = ""
+        self.lan = None
+        self.lan_error = ""
 
         page.title = APP_TITLE
         page.padding = 0
+        page.fonts = {MONO_FONT: "fonts/DejaVuSansMono.ttf"}  # the terminal needs equal-width letters
         page.on_resize = lambda e: self.layout()
+        page.on_close = lambda e: self.shutdown()
+        from fta.core import hostkeys
+
+        hostkeys.DEFAULT_PATH = self.store.data_dir / "known_hosts"
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service
         self.updater = Updater(self)
         self.browser = BrowserView(self)
         self.transfers = TransfersView(self)
+        self.nearby = NearbyView(self)
         self.connections = ConnectionsView(self)
         self.settings = SettingsView(self)
-        self.views = [self.browser, self.transfers, self.connections, self.settings]
+        self.terminal = TerminalView(self)
+        # The terminal is the one screen without a tab: it opens from a connection or a device.
+        self.views = [self.browser, self.transfers, self.nearby, self.connections, self.settings, self.terminal]
+        page.on_keyboard_event = self._on_keyboard
 
         # The active-transfers badge only renders on an Icon (not on the destination itself),
-        # and the selected tab shows selected_icon, so all four icons carry it.
+        # and the selected tab shows selected_icon, so the rail's and the bar's icons all carry it.
         self._badge_icons = [ft.Icon(ft.Icons.SWAP_VERT) for _ in range(4)]
 
         def icons(index: int, offset: int) -> dict[str, ft.IconData | ft.Icon]:
@@ -99,6 +122,93 @@ class App:
         self.layout()
         if self.store.settings.check_updates:
             self.updater.check_in_background(silent=True)
+        self.apply_server()
+        self.apply_lan()
+
+    # --- SSH/SFTP server --------------------------------------------------------------
+
+    def apply_server(self) -> None:
+        """Start or stop the SSH/SFTP server to match the settings; errors land in server_error."""
+        from fta.server.ssh import server_from_store
+
+        if self.server is not None:
+            self.server.stop()
+            self.server = None
+        self.server_error = ""
+        self.lan = None
+        self.lan_error = ""
+        if self.store.settings.server_enabled:
+            server = server_from_store(self.store, self.queue, self.journal, peers=self.peer_names)
+            try:
+                server.start()
+            except Exception as exc:  # port taken, no permission: shown in Settings
+                self.server_error = str(exc) or type(exc).__name__
+            else:
+                self.server = server
+        self.settings.refresh_server()
+        if self.lan is not None:
+            self.apply_lan()  # announce the new SSH port to nearby devices
+
+    def shutdown(self) -> None:
+        """Release what outlives the window: the server's and the receiver's ports."""
+        if self.server is not None:
+            self.server.stop()
+            self.server = None
+        if self.lan is not None:
+            self.lan.stop()
+            self.lan = None
+        self.terminal.disconnect()
+
+    # --- local network ---------------------------------------------------------------
+
+    def apply_lan(self) -> None:
+        """Start or stop receiving and discovery to match the settings."""
+        from fta.lan.service import LanService
+
+        if self.lan is not None:
+            self.lan.stop()
+            self.lan = None
+        self.lan_error = ""
+        settings = self.store.settings
+        if settings.lan_enabled:
+            lan = LanService(
+                self.store.data_dir,
+                self.store.receive_dir,
+                self.nearby.decide,
+                name=settings.device_name,
+                port=settings.lan_port,
+                pin=settings.lan_pin,
+                on_update=self.nearby.offer_changed,
+                on_peers=self.nearby.refresh,
+                ssh_port=lambda: self.server.port if self.server else None,
+            )
+            try:
+                lan.start()
+            except Exception as exc:  # port taken, no network: shown on the Nearby screen
+                self.lan_error = str(exc) or type(exc).__name__
+            else:
+                self.lan = lan
+        self.nearby.refresh()
+
+    def received(self, offer) -> None:
+        """Files from a nearby device have arrived: journal them and tell the user."""
+        from fta.core.journal import JournalEntry
+
+        for index, item in enumerate(offer.files):
+            if not item.is_dir:
+                self.journal.append(
+                    JournalEntry(f"fta://{offer.sender_name}/{item.path}", str(offer.destinations[index]), item.size, "done")
+                )
+        folder = self.lan.receiver.directory if self.lan else None
+        self.notify(
+            f"Получено от {offer.sender_name}: {offer_text(offer)}",
+            action="Открыть папку" if folder else None,
+            on_action=(lambda e: _open_folder(folder)) if folder else None,
+        )
+
+    def peer_names(self) -> list[str]:
+        """Devices on the local network, for the server shell's `peers`."""
+        return self.lan.peer_names() if self.lan else []
 
     # --- layout and navigation ------------------------------------------------------
 
@@ -117,8 +227,16 @@ class App:
         self.page.update()
 
     def go(self, index: int) -> None:
-        self.index = self.rail.selected_index = self.bar.selected_index = index
+        self.index = index
+        if index < len(_SECTIONS):
+            self.rail.selected_index = self.bar.selected_index = index
+        else:
+            self.rail.selected_index = None  # a screen without a tab
         self.layout()
+
+    def _on_keyboard(self, e: ft.KeyboardEvent) -> None:
+        if self.views[self.index] is self.terminal:
+            self.terminal.on_keyboard(e)
 
     def update_badge(self) -> None:
         active = self.queue.active_count
@@ -143,9 +261,65 @@ class App:
         self.browser.right.refresh_sources()
         self.page.update()
 
-    def open_in_browser(self, connection: Connection) -> None:
+    def open_in_browser(self, connection: Connection, refresh: bool = False) -> None:
+        if refresh:  # a quick connection the source lists have not seen yet
+            self.browser.left.refresh_sources()
+            self.browser.right.refresh_sources()
         self.go(0)
         self.browser.open_connection(connection)
+
+    def open_terminal(self, connection: Connection) -> None:
+        self.ensure_password(connection, lambda: self.terminal.open(connection))
+
+    def quick_connect(self, **prefill) -> None:
+        from fta.app.views.connections import QuickConnectDialog
+
+        QuickConnectDialog(self, **prefill).show()
+
+    def confirm_host_key(self, exc, then: Callable[[], None]) -> None:
+        """Ask whether to trust a server's key, as PuTTY does on the first connection."""
+        from fta.core import hostkeys
+
+        changed = isinstance(exc, hostkeys.HostKeyChanged)
+
+        def trust(_: ft.Event[ft.Control]) -> None:
+            hostkeys.trust(exc.host, exc.port, exc.key)
+            self.page.pop_dialog()
+            then()
+
+        text = (
+            "Ключ сервера ИЗМЕНИЛСЯ с прошлого подключения. Если сервер не переустанавливали, "
+            "кто-то может перехватывать соединение. Не продолжайте, пока не сверите отпечаток "
+            "с администратором."
+            if changed
+            else "Это первое подключение к серверу. Сверьте отпечаток с тем, что показывает сам сервер "
+            "(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub или раздел SSH-сервера в настройках "
+            "File Transfer for All), и только потом доверяйте."
+        )
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                icon=ft.Icon(ft.Icons.GPP_MAYBE_OUTLINED if changed else ft.Icons.KEY_OUTLINED, color=ft.Colors.ERROR if changed else None),
+                title=ft.Text("Ключ сервера изменился!" if changed else f"Новый сервер {exc.host}"),
+                content=ft.Column(
+                    [
+                        ft.Text(text, color=ft.Colors.ERROR if changed else None),
+                        ft.Text(f"{exc.host}:{exc.port}\n{exc.key_type}\n{exc.fingerprint}", selectable=True, font_family="monospace"),
+                    ],
+                    tight=True,
+                    spacing=12,
+                    width=460,
+                ),
+                actions=[
+                    ft.TextButton("Отмена", on_click=lambda e: self.page.pop_dialog()),
+                    ft.FilledButton(
+                        "Заменить ключ" if changed else "Доверять",
+                        on_click=trust,
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.ERROR, color=ft.Colors.ON_ERROR) if changed else None,
+                    ),
+                ],
+            )
+        )
 
     def ensure_password(self, connection: Connection, then: Callable[[], None]) -> None:
         """Ask once per session for a password that was not saved, then continue."""
@@ -197,9 +371,20 @@ class App:
             pass
 
 
+def _open_folder(folder) -> None:
+    import subprocess
+    import sys
+
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(folder)])
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
+
+
 def main(page: ft.Page) -> None:
     App(page)
 
 
 def run() -> None:
-    ft.run(main)
+    ft.run(main, assets_dir=str(ASSETS_DIR) if ASSETS_DIR.is_dir() else "assets")

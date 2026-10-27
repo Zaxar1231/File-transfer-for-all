@@ -17,6 +17,7 @@ from fta.core.transport import Transport
 ENTRY_POINT_GROUP = "fta.transports"
 BUILTIN_MODULES = (
     "fta.transports.local",
+    "fta.transports.memory",
     "fta.transports.http",
     "fta.transports.webdav",
     "fta.transports.ftp",

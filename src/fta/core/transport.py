@@ -35,11 +35,12 @@ class Progress:
     parts in parallel.
     """
 
-    def __init__(self, callback: ProgressCallback | None, total: int | None = None) -> None:
+    def __init__(self, callback: ProgressCallback | None, total: int | None = None, done: int = 0) -> None:
         self._callback = callback
         self._lock = threading.Lock()
         self.total = total
-        self.done = 0
+        self.done = done
+        """Starts above zero when a transfer resumes."""
 
     def advance(self, count: int) -> None:
         with self._lock:
@@ -73,6 +74,16 @@ def join_path(parent: str, name: str) -> str:
     return f"{parent.rstrip('/')}/{name}"
 
 
+def open_for_resume(path: Path, offset: int) -> BinaryIO:
+    """Open a local file for writing at ``offset``: truncate to it, or start afresh at 0."""
+    if offset:
+        fp = path.open("r+b")
+        fp.truncate(offset)
+        fp.seek(offset)
+        return fp
+    return path.open("wb")
+
+
 _Method = TypeVar("_Method", bound=Callable[..., Any])
 
 
@@ -101,6 +112,10 @@ class Transport(ABC):
 
     library_errors: tuple[type[BaseException], ...] = ()
     """Exceptions of the underlying library that ``translate_errors`` converts."""
+
+    can_resume_download: ClassVar[bool] = False
+    can_resume_upload: ClassVar[bool] = False
+    """Whether ``download``/``upload`` honour ``offset`` and continue a partial file."""
 
     def __init__(self, endpoint: Endpoint, **options: Any) -> None:
         self.endpoint = endpoint
@@ -137,10 +152,18 @@ class Transport(ABC):
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
+    # The roadmap's send/recv/list/resume map to upload/download/listdir and the
+    # ``offset`` argument: with offset > 0 the first ``offset`` bytes are already at
+    # the destination and the transfer continues from there.
+
+    def upload(
+        self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0
+    ) -> None:
         raise UnsupportedOperation(f"{type(self).__name__} cannot upload")
 
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
+    def download(
+        self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0
+    ) -> None:
         raise UnsupportedOperation(f"{type(self).__name__} cannot download")
 
     def listdir(self, remote: str) -> list[RemoteEntry]:

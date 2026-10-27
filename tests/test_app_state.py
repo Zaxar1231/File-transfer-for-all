@@ -7,6 +7,11 @@ import time
 
 import pytest
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover
+    import tomli as tomllib
+
 from fta.app.storage import Connection, Store
 from fta.app.transfers import JobState, TransferJob, TransferQueue
 
@@ -24,31 +29,67 @@ def test_password_goes_to_options_not_url():
 
 
 def test_password_is_saved_only_on_request(tmp_path):
-    store = Store(tmp_path / "config.json")
+    path = tmp_path / "config.toml"
+    store = Store(path, environ={})
     store.upsert(Connection("kept", "ftp", "h", username="u", password="p1", save_password=True))
     store.upsert(Connection("dropped", "ftp", "h", username="u", password="p2"))
 
-    saved = json.loads((tmp_path / "config.json").read_text())
+    saved = tomllib.loads(path.read_text())
     assert [c["password"] for c in saved["connections"]] == ["p1", ""]
     if sys.platform != "win32":
-        assert os.stat(tmp_path / "config.json").st_mode & 0o777 == 0o600
+        assert os.stat(path).st_mode & 0o777 == 0o600
 
-    reloaded = Store(tmp_path / "config.json")
+    reloaded = Store(path, environ={})
     assert [c.name for c in reloaded.connections] == ["kept", "dropped"]
     assert reloaded.connections[0].password == "p1"
+    assert reloaded.connections[0].port is None  # TOML has no null; the default comes back
 
 
 def test_store_survives_unknown_and_broken_files(tmp_path):
-    path = tmp_path / "config.json"
-    path.write_text("{not json")
-    assert Store(path).connections == []
+    path = tmp_path / "config.toml"
+    path.write_text("[settings\nbroken")
+    assert Store(path, environ={}).connections == []
 
-    path.write_text(json.dumps({"settings": {"theme_mode": "dark", "from_the_future": 1}, "connections": []}))
-    assert Store(path).settings.theme_mode == "dark"
+    path.write_text('[settings]\ntheme_mode = "dark"\nfrom_the_future = 1\n')
+    assert Store(path, environ={}).settings.theme_mode == "dark"
+
+
+def test_environment_overrides_are_not_written_back(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[settings]\nparallel_transfers = 2\nverify = false\n")
+    store = Store(path, environ={"FTA_PARALLEL_TRANSFERS": "6", "FTA_VERIFY": "yes", "FTA_RETRIES": "oops"})
+
+    assert store.settings.parallel_transfers == 6
+    assert store.settings.verify is True
+    assert store.settings.retries == 3  # an unparsable value is ignored
+
+    store.settings.theme_mode = "dark"
+    store.save()
+    saved = tomllib.loads(path.read_text())["settings"]
+    assert saved["parallel_transfers"] == 2 and saved["verify"] is False
+    assert saved["theme_mode"] == "dark"
+
+
+def test_config_path_and_data_dir_from_environment(tmp_path):
+    store = Store(environ={"FTA_CONFIG": str(tmp_path / "custom.toml")})
+    assert store.path == tmp_path / "custom.toml"
+    assert store.data_dir == tmp_path
+
+
+def test_json_config_from_older_versions_is_migrated(tmp_path):
+    legacy = tmp_path / "config.json"
+    legacy.write_text(json.dumps({"settings": {"seed_color": "#006A6A"}, "connections": [{"name": "nas", "scheme": "sftp", "host": "nas.local", "id": "x"}]}))
+
+    store = Store(tmp_path / "config.toml", environ={})
+
+    assert store.settings.seed_color == "#006A6A"
+    assert [c.name for c in store.connections] == ["nas"]
+    assert (tmp_path / "config.toml").exists()
+    assert not legacy.exists() and (tmp_path / "config.json.migrated").exists()
 
 
 def test_upsert_replaces_by_id_and_remove(tmp_path):
-    store = Store(tmp_path / "config.json")
+    store = Store(tmp_path / "config.toml", environ={})
     connection = Connection("a", "ftp", "h")
     store.upsert(connection)
     store.upsert(Connection("renamed", "ftp", "h", id=connection.id))
@@ -191,3 +232,27 @@ def test_app_modules_import():
     """The UI modules at least import and wire up against the installed Flet."""
     pytest.importorskip("flet")
     import fta.app.main  # noqa: F401
+
+
+def test_quick_connections_are_not_saved(tmp_path):
+    from fta.app.storage import Connection, Store
+
+    store = Store(tmp_path / "config.toml", environ={})
+    first = store.add_temporary(Connection(name="nas", scheme="sftp", host="192.168.1.5", username="me", password="pw"))
+    again = store.add_temporary(Connection(name="nas", scheme="sftp", host="192.168.1.5", username="me"))
+    assert again is first and again.password == "pw"  # one entry per place, password kept
+    assert store.get(first.id) is first
+    store.save()
+    assert "192.168.1.5" not in (tmp_path / "config.toml").read_text()
+    store.upsert(first)  # "save" turns it into a normal connection
+    assert store.temporary == [] and store.connections == [first]
+
+
+def test_split_address():
+    pytest.importorskip("flet")
+    from fta.app.views.connections import split_address
+
+    assert split_address("192.168.1.5", 22) == ("192.168.1.5", 22)
+    assert split_address(" nas.local:2222 ", None) == ("nas.local", 2222)
+    assert split_address("[fe80::1]:2200", None) == ("fe80::1", 2200)
+    assert split_address("fe80::1", 22) == ("fe80::1", 22)

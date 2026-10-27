@@ -51,6 +51,33 @@ def roundtrip_tree(base_url: str, tmp_path, options: dict[str, str]) -> None:
             transport.stat(remote_dir + "/a.txt")
 
 
+def resume_and_verify(base_url: str, tmp_path, options: dict[str, str], upload: bool = True) -> None:
+    """A half-sent file is completed, not resent, and the copy's SHA-256 matches."""
+    payload = os.urandom(600_000)
+    half = len(payload) // 2
+    full = tmp_path / "big.bin"
+    full.write_bytes(payload)
+    part = tmp_path / "part" / "big.bin"
+    part.parent.mkdir()
+
+    if upload:
+        part.write_bytes(payload[:half])
+        copy(str(part), base_url + "/", destination_options=options)
+        [result] = copy(str(full), base_url + "/", resume=True, verify=True, destination_options=options)
+        assert result.resumed_from == half
+        assert result.verified
+    else:
+        copy(str(full), base_url + "/", destination_options=options)
+
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "big.bin").write_bytes(payload[:half])
+    [result] = copy(base_url + "/big.bin", str(local), resume=True, verify=True, source_options=options)
+    assert result.resumed_from == half
+    assert result.verified
+    assert (local / "big.bin").read_bytes() == payload
+
+
 @pytest.fixture
 def ftp_url(tmp_path):
     pytest.importorskip("pyftpdlib")
@@ -238,6 +265,7 @@ def s3_url(monkeypatch):
 
 def test_ftp(ftp_url, tmp_path):
     roundtrip_tree(ftp_url, tmp_path, {"password": "secret"})
+    resume_and_verify(ftp_url, tmp_path, {"password": "secret"})
 
 
 def test_ftp_download_knows_the_total_size(ftp_url, tmp_path):
@@ -258,18 +286,34 @@ def test_ftp_download_knows_the_total_size(ftp_url, tmp_path):
 
 def test_webdav(dav_port, tmp_path):
     roundtrip_tree(f"dav://127.0.0.1:{dav_port}", tmp_path, {})
+    resume_and_verify(f"dav://127.0.0.1:{dav_port}", tmp_path, {}, upload=False)  # Range download
 
 
 def test_sftp(sftp_url, tmp_path):
-    roundtrip_tree(sftp_url, tmp_path, {"password": "secret", "accept_unknown_host": "true"})
+    options = {"password": "secret", "accept_unknown_host": "true"}
+    roundtrip_tree(sftp_url, tmp_path, options)
+    resume_and_verify(sftp_url, tmp_path, options)
 
 
 def test_s3(s3_url, tmp_path):
     roundtrip_tree(s3_url, tmp_path, {})
+    resume_and_verify(s3_url, tmp_path, {}, upload=False)  # ranged GET; objects cannot be appended
 
 
 def test_smb(smb_url, tmp_path):
     roundtrip_tree(smb_url, tmp_path, {"password": "secret"})
+    resume_and_verify(smb_url, tmp_path, {"password": "secret"})
+
+
+def test_memory_and_local(tmp_path):
+    from fta.transports import memory
+
+    memory.reset()
+    for name in ("mem", "local", "disk"):
+        (tmp_path / name).mkdir()
+    roundtrip_tree("mem://box", tmp_path / "mem", {})
+    resume_and_verify("mem://box", tmp_path / "mem", {})
+    resume_and_verify(str(tmp_path / "disk"), tmp_path / "local", {})
 
 
 def test_smb_reports_wrong_password_and_missing_share(smb_url):
