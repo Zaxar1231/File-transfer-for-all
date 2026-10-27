@@ -9,14 +9,18 @@ from __future__ import annotations
 from importlib import import_module, metadata
 from typing import Any
 
-from fta.core.errors import UnsupportedScheme
 from fta.core.endpoint import Endpoint
+from fta.core.errors import UnsupportedScheme
 from fta.core.transport import Transport
 
 ENTRY_POINT_GROUP = "fta.transports"
 BUILTIN_MODULES = (
+    "fta.transports.local",
     "fta.transports.http",
+    "fta.transports.webdav",
     "fta.transports.ftp",
+    "fta.transports.sftp",
+    "fta.transports.s3",
     "fta.transports.planned",
 )
 
@@ -52,11 +56,12 @@ def transport_class(scheme: str) -> type[Transport]:
 
 
 def open_transport(location: str, **options: Any) -> Transport:
-    """Build a transport for a remote URL. Use it as a context manager to connect."""
+    """Build a transport for a local path or URL. Use it as a context manager to connect."""
     endpoint = Endpoint.parse(location)
     return transport_class(endpoint.scheme)(endpoint, **options)
 
 
 def known_schemes() -> list[str]:
+    """Registered URL schemes; plain local paths (scheme "") are not listed."""
     _load_all()
-    return sorted(_registry)
+    return sorted(scheme for scheme in _registry if scheme)

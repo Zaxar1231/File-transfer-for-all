@@ -11,3 +11,7 @@ class UnsupportedScheme(TransferError):
 
 class UnsupportedOperation(TransferError):
     """The transport does not implement the requested operation."""
+
+
+class NotFound(TransferError):
+    """The remote file or directory does not exist."""

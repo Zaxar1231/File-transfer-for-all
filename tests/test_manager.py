@@ -1,6 +1,6 @@
 import pytest
 
-from fta import Transport, copy, register
+from fta import Transport, TransferError, UnsupportedScheme, copy, register
 
 
 class MemoryTransport(Transport):
@@ -26,6 +26,9 @@ class MemoryTransport(Transport):
         local.write_bytes(data)
         if progress:
             progress(len(data), len(data))
+
+    def mkdir(self, remote, exist_ok=False):
+        pass  # keys are flat, like S3
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +60,15 @@ def test_remote_to_remote_is_staged(tmp_path):
     assert MemoryTransport.store[("two", "/y/b.bin")] == b"data"
 
 
+def test_trailing_slash_copies_into_directory(tmp_path):
+    src = tmp_path / "c.txt"
+    src.write_bytes(b"c")
+
+    copy(str(src), "mem://h/inbox/")
+
+    assert MemoryTransport.store[("h", "/inbox/c.txt")] == b"c"
+
+
 def test_progress_reports_totals(tmp_path):
     src = tmp_path / "c.bin"
     src.write_bytes(b"1234")
@@ -67,9 +79,44 @@ def test_progress_reports_totals(tmp_path):
     assert events == [(4, 4)]
 
 
-def test_unknown_scheme_is_rejected(tmp_path):
-    from fta import UnsupportedScheme
+def test_recursive_local_tree_to_remote(tmp_path):
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "top.txt").write_bytes(b"top")
+    (src / "sub" / "deep.txt").write_bytes(b"deep")
+    seen = []
 
+    copy(str(src), "mem://h/backup/", recursive=True, on_file=seen.append)
+
+    assert MemoryTransport.store == {
+        ("h", "/backup/tree/top.txt"): b"top",
+        ("h", "/backup/tree/sub/deep.txt"): b"deep",
+    }
+    assert len(seen) == 2
+
+
+def test_recursive_local_to_local(tmp_path):
+    src = tmp_path / "tree"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "f.txt").write_bytes(b"f")
+    dst = tmp_path / "dst"
+    dst.mkdir()
+
+    copy(str(src), str(dst), recursive=True)
+
+    assert (dst / "tree" / "sub" / "f.txt").read_bytes() == b"f"
+
+
+def test_copy_onto_itself_is_refused(tmp_path):
+    src = tmp_path / "same.txt"
+    src.write_bytes(b"keep me")
+
+    with pytest.raises(TransferError):
+        copy(str(src), str(src))
+    assert src.read_bytes() == b"keep me"
+
+
+def test_unknown_scheme_is_rejected(tmp_path):
     src = tmp_path / "d.bin"
     src.write_bytes(b"x")
 

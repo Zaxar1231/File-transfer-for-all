@@ -1,14 +1,16 @@
-"""The Transport interface every protocol implements, plus shared progress helpers."""
+"""The Transport interface every protocol implements, plus shared helpers."""
 
 from __future__ import annotations
 
+import functools
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, ClassVar
+from typing import Any, BinaryIO, Callable, ClassVar, TypeVar
 
 from fta.core.endpoint import Endpoint
-from fta.core.errors import UnsupportedOperation
+from fta.core.errors import TransferError, UnsupportedOperation
 
 CHUNK_SIZE = 64 * 1024
 
@@ -27,17 +29,23 @@ class RemoteEntry:
 
 
 class Progress:
-    """Counts bytes and forwards them to a ProgressCallback."""
+    """Counts bytes and forwards them to a ProgressCallback.
+
+    Safe to advance from several threads, since some libraries (boto3) transfer
+    parts in parallel.
+    """
 
     def __init__(self, callback: ProgressCallback | None, total: int | None = None) -> None:
         self._callback = callback
+        self._lock = threading.Lock()
         self.total = total
         self.done = 0
 
     def advance(self, count: int) -> None:
-        self.done += count
-        if self._callback:
-            self._callback(self.done, self.total)
+        with self._lock:
+            self.done += count
+            if self._callback:
+                self._callback(self.done, self.total)
 
     def wrap_reader(self, fp: BinaryIO) -> _ProgressReader:
         """Wrap a file so that every read done by a protocol library is counted."""
@@ -55,18 +63,64 @@ class _ProgressReader:
         return chunk
 
 
+def copy_stream(reader: Any, writer: BinaryIO, progress: Progress) -> None:
+    for chunk in iter(lambda: reader.read(CHUNK_SIZE), b""):
+        writer.write(chunk)
+        progress.advance(len(chunk))
+
+
+def join_path(parent: str, name: str) -> str:
+    return f"{parent.rstrip('/')}/{name}"
+
+
+_Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def translate_errors(method: _Method) -> _Method:
+    """Re-raise the protocol library's exceptions (``self.library_errors``) as TransferError."""
+
+    @functools.wraps(method)
+    def wrapper(self: Transport, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(self, *args, **kwargs)
+        except self.library_errors as exc:
+            raise TransferError(f"{self.endpoint.scheme}: {exc}") from exc
+
+    return wrapper  # type: ignore[return-value]
+
+
 class Transport(ABC):
     """Base class for one protocol.
 
     Subclasses set ``schemes`` and override the operations they support.
     Operations a protocol lacks keep raising ``UnsupportedOperation``.
+    Paths given to operations are the path part of the URL, e.g. ``/dir/file``.
     """
 
     schemes: ClassVar[tuple[str, ...]] = ()
 
+    library_errors: tuple[type[BaseException], ...] = ()
+    """Exceptions of the underlying library that ``translate_errors`` converts."""
+
     def __init__(self, endpoint: Endpoint, **options: Any) -> None:
         self.endpoint = endpoint
         self.options = options
+
+    @property
+    def username(self) -> str | None:
+        return self.options.get("username") or self.endpoint.username
+
+    @property
+    def password(self) -> str | None:
+        """Prefer the ``password`` option: a password in the URL ends up in shell history."""
+        return self.options.get("password") or self.endpoint.password
+
+    def float_option(self, name: str, default: float) -> float:
+        return float(self.options.get(name, default))
+
+    def bool_option(self, name: str, default: bool = False) -> bool:
+        value = self.options.get(name, default)
+        return value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes", "on")
 
     @abstractmethod
     def connect(self) -> None:
@@ -92,8 +146,13 @@ class Transport(ABC):
     def listdir(self, remote: str) -> list[RemoteEntry]:
         raise UnsupportedOperation(f"{type(self).__name__} cannot list directories")
 
-    def mkdir(self, remote: str) -> None:
+    def stat(self, remote: str) -> RemoteEntry:
+        """Describe one path; raise NotFound if it does not exist."""
+        raise UnsupportedOperation(f"{type(self).__name__} cannot stat paths")
+
+    def mkdir(self, remote: str, exist_ok: bool = False) -> None:
         raise UnsupportedOperation(f"{type(self).__name__} cannot create directories")
 
     def delete(self, remote: str) -> None:
-        raise UnsupportedOperation(f"{type(self).__name__} cannot delete files")
+        """Delete a file or an empty directory."""
+        raise UnsupportedOperation(f"{type(self).__name__} cannot delete")
