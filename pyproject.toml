@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fta"
-version = "0.9.0"
+version = "1.0.0"
 description = "File Transfer for All: a Material You app for moving files over SFTP, FTP, WebDAV, S3 and HTTP"
 readme = "README.md"
 license = { text = "MIT" }
@@ -38,6 +38,7 @@ dependencies = [
     "zeroconf>=0.132",   # finding nearby devices (mDNS/Bonjour)
     "segno>=1.6",        # QR codes, no image library needed
     "pyte>=0.8",         # VT100/xterm screen for the built-in SSH terminal
+    "PySocks>=1.7",      # SOCKS proxies: Tor and .onion servers
 ]
 
 [project.urls]

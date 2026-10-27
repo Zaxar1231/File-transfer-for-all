@@ -181,6 +181,19 @@ class ConnectionDialog:
         self.accept_host = ft.Switch(
             label="Доверять новому ключу сервера без вопроса", value=c.options.get("accept_unknown_host") == "true"
         )
+        self.proxy = ft.TextField(
+            label="SOCKS-прокси (необязательно)",
+            value=c.options.get("proxy", ""),
+            hint_text="socks5h://127.0.0.1:9050",
+            expand=True,
+        )
+        self.proxy_row = ft.Row(
+            [
+                self.proxy,
+                ft.TextButton("Tor", icon=ft.Icons.SECURITY, tooltip="Через Tor на этом компьютере (порт 9050; Tor Browser — 9150)", on_click=self._use_tor),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
         self.endpoint_url = ft.TextField(
             label="Endpoint URL (для MinIO, R2 и т. п.)", value=c.options.get("endpoint_url", "")
         )
@@ -201,6 +214,7 @@ class ConnectionDialog:
                     self.path,
                     self.key_file,
                     self.accept_host,
+                    self.proxy_row,
                     self.endpoint_url,
                     self.region,
                     ft.Row([self.testing, self.test_result], spacing=8),
@@ -238,6 +252,7 @@ class ConnectionDialog:
         self.path.hint_text = "/share/папка" if smb else None
         self.username.hint_text = "ДОМЕН\\пользователь" if smb else None
         self.endpoint_url.visible = self.region.visible = s3
+        self.proxy_row.visible = scheme in ("sftp", "dav", "davs", "http", "https")
         try:
             self.dialog.update()
         except (RuntimeError, AssertionError):
@@ -263,6 +278,8 @@ class ConnectionDialog:
                 options["key_file"] = self.key_file.value.strip()
             if self.accept_host.value:
                 options["accept_unknown_host"] = "true"
+        if self.proxy_row.visible and (self.proxy.value or "").strip():
+            options["proxy"] = self.proxy.value.strip()
         if scheme == "s3":
             for key, field in (("endpoint_url", self.endpoint_url), ("region", self.region)):
                 if field.value:
@@ -282,6 +299,12 @@ class ConnectionDialog:
         if self.original:
             connection.id = self.original.id
         return connection
+
+    def _use_tor(self, e: ft.Event[ft.Control]) -> None:
+        from fta.core.proxy import TOR
+
+        self.proxy.value = TOR
+        safe_update(self.proxy)
 
     def _save(self, e: ft.Event[ft.FilledButton]) -> None:
         connection = self._build()

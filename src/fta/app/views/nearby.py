@@ -61,6 +61,14 @@ class NearbyView:
         self.incoming = ft.Column(spacing=8)
         self.incoming_title = ft.Text("Входящие", theme_style=ft.TextThemeStyle.TITLE_MEDIUM, visible=False)
         self._offer_rows: dict[str, ft.ListTile] = {}
+        self.tailnet_title = ft.Row(
+            [
+                ft.Text("Tailscale", theme_style=ft.TextThemeStyle.TITLE_MEDIUM, expand=True),
+                ft.IconButton(ft.Icons.REFRESH, tooltip="Обновить", on_click=lambda e: self.refresh_tailnet()),
+            ],
+            visible=False,
+        )
+        self.tailnet = ft.Column(spacing=8)
         self.shares_title = ft.Text("Ссылки на файлы", theme_style=ft.TextThemeStyle.TITLE_MEDIUM, visible=False)
         self.shares = ft.Column(spacing=4)
         self._last_key: tuple[str, str] = ("", "")
@@ -85,6 +93,8 @@ class NearbyView:
                         ft.Text("Устройства", theme_style=ft.TextThemeStyle.TITLE_MEDIUM),
                         self.peer_list,
                         self.peers_empty,
+                        self.tailnet_title,
+                        self.tailnet,
                         self.incoming_title,
                         self.incoming,
                         self.shares_title,
@@ -100,6 +110,7 @@ class NearbyView:
             spacing=16,
         )
         self.refresh()
+        self.refresh_tailnet()
 
     # --- state -----------------------------------------------------------------------
 
@@ -127,6 +138,84 @@ class NearbyView:
         self.peer_list.visible = bool(peers)
         self.peers_empty.visible = not peers
         safe_update(self.status, self.peer_list, self.peers_empty)
+
+    # --- Tailscale ---------------------------------------------------------------------
+
+    def refresh_tailnet(self) -> None:
+        """Devices from Tailscale; each online one is asked in the background whether it runs FTA."""
+        from fta.tools import tailscale
+
+        if tailscale.find() is None:
+            return
+
+        def worker() -> None:
+            from fta.lan.direct import fetch_info
+            from fta.lan.links import DEFAULT_PORT
+
+            try:
+                peers = [p for p in tailscale.peers() if p.online]
+            except Exception as exc:  # logged out, daemon stopped
+                self.tailnet.controls = [ft.Text(f"Tailscale: {exc}", color=ft.Colors.ON_SURFACE_VARIANT)]
+                self.tailnet_title.visible = True
+                safe_update(self.tailnet_title, self.tailnet)
+                return
+            cards = []
+            for peer in peers:
+                try:
+                    info, fingerprint = fetch_info(peer.address, DEFAULT_PORT, timeout=2)
+                except Exception:  # noqa: BLE001 - no FTA there: Taildrop it is
+                    cards.append(self._tailnet_card(peer, None))
+                else:
+                    cards.append(self._tailnet_card(peer, PeerLink(peer.address, DEFAULT_PORT, fingerprint, info.get("name") or peer.name)))
+            self.tailnet.controls = cards or [ft.Text("В сети Tailscale никого нет онлайн", color=ft.Colors.ON_SURFACE_VARIANT)]
+            self.tailnet_title.visible = True
+            safe_update(self.tailnet_title, self.tailnet)
+
+        self.app.page.run_thread(worker)
+
+    def _tailnet_card(self, peer, link: PeerLink | None) -> ft.Card:
+        via = "File Transfer for All" if link else "Taildrop"
+        return ft.Card(
+            variant=ft.CardVariant.OUTLINED,
+            content=ft.ListTile(
+                leading=ft.CircleAvatar(content=ft.Icon(ft.Icons.VPN_LOCK), bgcolor=ft.Colors.SECONDARY_CONTAINER),
+                title=ft.Text(peer.name, theme_style=ft.TextThemeStyle.TITLE_MEDIUM),
+                subtitle=ft.Text(f"{peer.address} · {peer.os} · через {via}", color=ft.Colors.ON_SURFACE_VARIANT),
+                trailing=ft.IconButton(ft.Icons.SEND_OUTLINED, tooltip=f"Отправить через {via}", on_click=lambda e: self._tailnet_send(peer, link)),
+                on_click=lambda e: self._tailnet_send(peer, link),
+            ),
+        )
+
+    async def _tailnet_send(self, peer, link: PeerLink | None) -> None:
+        if link is not None:
+            await self._pick_files(link)
+            return
+        from fta.core.manager import FileResult
+        from fta.tools import tailscale
+
+        files = await self.app.picker.pick_files(dialog_title=f"Taildrop: {peer.name}", allow_multiple=True)
+        paths = [Path(f.path) for f in files or [] if f.path]
+        if not paths:
+            return
+
+        def action(progress, on_file, resume):
+            total = sum(p.stat().st_size for p in paths)
+            started = time.monotonic()
+            tailscale.taildrop(paths, peer)
+            progress(total, total)
+            return [FileResult(str(p), f"/{p.name}", p.stat().st_size, time.monotonic() - started) for p in paths]
+
+        self.app.queue.add(
+            TransferJob(
+                name=paths[0].name if len(paths) == 1 else f"{paths[0].name} и ещё {len(paths) - 1}",
+                source=str(paths[0].parent),
+                destination=f"🔒 {peer.name} (Taildrop)",
+                source_url="",
+                destination_url=f"taildrop://{peer.address}",
+                action=action,
+            )
+        )
+        self.app.notify(f"Taildrop: отправляем на {peer.name}", action="Передачи", on_action=lambda e: self.app.go(1))
 
     def _refresh_shares(self) -> None:
         shares = self.app.lan.receiver.shares.listing() if self.app.lan else []

@@ -25,7 +25,8 @@ from fta.core.transport import (
 
 @register
 class SftpTransport(Transport):
-    """Options: username, password, key_file, known_hosts, accept_unknown_host, timeout.
+    """Options: username, password, key_file, known_hosts, accept_unknown_host, timeout,
+    proxy (``socks5h://127.0.0.1:9050`` for Tor).
 
     Host keys are checked against ~/.ssh/known_hosts and the app's known_hosts
     (``known_hosts`` overrides it). An unknown host raises UnknownHostKey with its
@@ -72,12 +73,19 @@ class SftpTransport(Transport):
         self._client = client
 
     def _login(self) -> dict[str, Any]:
-        return {
+        login: dict[str, Any] = {
             "username": self.username,
             "password": self.password,
             "key_filename": self.options.get("key_file"),
             "timeout": self.float_option("timeout", 30),
         }
+        if proxy_url := self.options.get("proxy"):  # e.g. Tor: socks5h://127.0.0.1:9050, .onion hosts work
+            from fta.core.proxy import Proxy
+
+            login["sock"] = Proxy.parse(proxy_url).connect(
+                self.endpoint.host or "", self.endpoint.port or 22, self.float_option("timeout", 30)
+            )
+        return login
 
     def close(self) -> None:
         if self._sftp is not None:

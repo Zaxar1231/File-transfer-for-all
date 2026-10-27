@@ -173,6 +173,7 @@ class TerminalView:
             connection.username,
             connection.password,
             connection.options.get("key_file", ""),
+            proxy=connection.options.get("proxy", ""),
             cols=cols,
             rows=rows,
             on_change=self._dirty.set,
