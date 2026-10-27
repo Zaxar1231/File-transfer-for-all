@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import stat as stat_mode
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -79,10 +80,22 @@ class SmbTransport(Transport):
 
     @translate_errors
     def listdir(self, remote: str) -> list[RemoteEntry]:
-        return [
-            _entry(item.name, join_path(remote, item.name), item.stat())
-            for item in self._smb.scandir(self._unc(remote), **self._kw)
-        ]
+        # Read the listing's own metadata: SMBDirEntry.stat() would reconnect
+        # without our port and connection cache.
+        entries = []
+        for item in self._smb.scandir(self._unc(remote), **self._kw):
+            info = item.smb_info
+            is_dir = bool(info.file_attributes & _FILE_ATTRIBUTE_DIRECTORY)
+            entries.append(
+                RemoteEntry(
+                    name=item.name,
+                    path=join_path(remote, item.name),
+                    is_dir=is_dir,
+                    size=None if is_dir else info.end_of_file,
+                    modified=_timestamp(info.last_write_time),
+                )
+            )
+        return entries
 
     @translate_errors
     def stat(self, remote: str) -> RemoteEntry:
@@ -132,6 +145,16 @@ class SmbTransport(Transport):
             return self.stat(remote).is_dir
         except NotFound:
             return False
+
+
+_FILE_ATTRIBUTE_DIRECTORY = 0x10
+
+
+def _timestamp(value: datetime) -> float:
+    """SMB times come back as datetimes; naive ones are UTC."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
 
 
 def _entry(name: str, path: str, info: Any) -> RemoteEntry:

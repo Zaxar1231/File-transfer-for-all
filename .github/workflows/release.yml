@@ -1,0 +1,114 @@
+name: Release
+
+# Builds the app for every platform. A pushed tag v<version> also publishes a
+# GitHub release; pull requests that touch this file only build, to test it.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLET_CLI: "flet[cli]==1.0.5"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest, target: windows }
+          - { name: macos, os: macos-latest, target: macos }
+          # Ubuntu 22.04 keeps glibc old (2.35), so the build also runs on older distributions.
+          - { name: linux-x64, os: ubuntu-22.04, target: linux }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, target: linux }
+          - { name: android, os: ubuntu-24.04, target: apk }
+          - { name: android-split, os: ubuntu-24.04, target: apk, extra: --split-per-abi }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Linux build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            binutils clang cmake lld llvm ninja-build pkg-config \
+            libgtk-3-dev libasound2-dev libsecret-1-dev libunwind-dev libmpv-dev mpv \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+
+      - name: Install Flet CLI
+        run: pip install "${{ env.FLET_CLI }}"
+
+      - name: Build
+        shell: bash
+        run: >
+          flet build ${{ matrix.target }} ${{ matrix.extra }}
+          --yes --no-rich-output
+          --build-version "$VERSION" --build-number "${{ github.run_number }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          case "${{ matrix.name }}" in
+            windows-x64)
+              (cd build/windows && 7z a -tzip "$GITHUB_WORKSPACE/dist/FileTransferForAll-windows-x64.zip" .) ;;
+            macos)
+              app=$(ls -d build/macos/*.app | head -1)
+              ditto -c -k --keepParent "$app" dist/FileTransferForAll-macos.zip ;;
+            linux-*)
+              tar -C build/linux -czf "dist/FileTransferForAll-${{ matrix.name }}.tar.gz" . ;;
+            android)
+              cp "$(ls build/apk/*.apk | head -1)" dist/FileTransferForAll-android.apk ;;
+            android-split)
+              for abi in arm64-v8a armeabi-v7a x86_64; do
+                cp "$(ls build/apk/*"$abi"*.apk | head -1)" "dist/FileTransferForAll-android-$abi.apk"
+              done ;;
+          esac
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: File Transfer for All ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true

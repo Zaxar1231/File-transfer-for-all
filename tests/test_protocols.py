@@ -215,11 +215,12 @@ def smb_url():
 
     yield f"smb://{user}@127.0.0.1:{port}/public"
 
-    server.terminate()
+    # smbd forks per connection; stop the whole session it leads, not only the parent.
+    subprocess.run([*sudo, "kill", "-TERM", "--", f"-{server.pid}"], capture_output=True)
     try:
         server.wait(10)
     except subprocess.TimeoutExpired:
-        server.kill()
+        subprocess.run([*sudo, "kill", "-KILL", "--", f"-{server.pid}"], capture_output=True)
     subprocess.run([*sudo, "rm", "-rf", base], capture_output=True)
 
 

@@ -1,12 +1,49 @@
 # File Transfer for All
 
 [![CI](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml/badge.svg)](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Zaxar1231/File-transfer-for-all)](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
 Приложение для передачи файлов в стиле **Material You (Material Design 3)**. Работает с
-SFTP, FTP/FTPS, WebDAV, Amazon S3 и S3-совместимыми хранилищами, HTTP(S) и файлами на
-самом устройстве. Собирается под Windows, macOS, Linux, Android и iOS.
+SFTP, SMB (Windows, Samba, NAS), FTP/FTPS, WebDAV, Amazon S3 и S3-совместимыми
+хранилищами, HTTP(S) и файлами на самом устройстве. Есть для Windows, macOS, Linux и Android.
+
+## Скачать
+
+Ссылки всегда ведут на последнюю версию.
+
+| Платформа | Файл |
+|---|---|
+| **Windows** 10/11, x64 | [FileTransferForAll-windows-x64.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-windows-x64.zip) |
+| **macOS** | [FileTransferForAll-macos.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-macos.zip) |
+| **Linux** x64 | [FileTransferForAll-linux-x64.tar.gz](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-linux-x64.tar.gz) |
+| **Linux** ARM64 (Raspberry Pi 4/5 и т. п.) | [FileTransferForAll-linux-arm64.tar.gz](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-linux-arm64.tar.gz) |
+| **Android**, любой процессор | [FileTransferForAll-android.apk](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-android.apk) |
+| Android, только ARM64 (большинство телефонов) | [FileTransferForAll-android-arm64-v8a.apk](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-android-arm64-v8a.apk) |
+| Android, ARMv7 (старые телефоны) | [FileTransferForAll-android-armeabi-v7a.apk](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-android-armeabi-v7a.apk) |
+| Android, x86_64 (эмуляторы, Chromebook) | [FileTransferForAll-android-x86_64.apk](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-android-x86_64.apk) |
+
+Все версии и контрольные суммы (`SHA256SUMS.txt`) — на [странице релизов](https://github.com/Zaxar1231/File-transfer-for-all/releases).
+
+Сборки пока не подписаны, поэтому система предупредит при первом запуске:
+
+- **Windows:** распакуйте архив и запустите `FileTransferForAll.exe`; в окне SmartScreen
+  нажмите «Подробнее» → «Выполнить в любом случае».
+- **macOS:** распакуйте архив и перетащите приложение в «Программы». Первый раз откройте
+  его через правый клик → «Открыть» или выполните
+  `xattr -dr com.apple.quarantine "/Applications/FileTransferForAll.app"`.
+- **Linux:** `tar -xzf FileTransferForAll-linux-x64.tar.gz -C ~/FileTransferForAll` и
+  запустите `~/FileTransferForAll/FileTransferForAll`. Сборка работает на дистрибутивах с
+  glibc 2.35 и новее (Ubuntu 22.04+, Debian 12+, Fedora 36+).
+- **Android:** откройте APK и разрешите установку из этого источника.
+
+### Обновления
+
+Приложение само проверяет при запуске, вышла ли новая версия, и предлагает обновиться.
+На Android новая версия APK скачивается и сразу открывается системным установщиком. На
+компьютере архив скачивается в «Загрузки» с прогрессом, и приложение показывает его в
+файловом менеджере. Проверку можно выключить или запустить вручную в «Настройки →
+Обновления».
 
 ![Файлы: две панели, слева устройство, справа FTP-сервер](docs/screenshots/files.png)
 
@@ -60,17 +97,28 @@ flet build linux       # или: windows, macos, apk, aab, ipa
 Windows, macOS и iOS собираются на своей ОС; требования к каждой платформе описаны в
 [документации Flet](https://flet.dev/docs/publish).
 
+### Выпуск релиза
+
+Все сборки делает workflow [`release.yml`](.github/workflows/release.yml) на GitHub Actions.
+
+1. Поднимите версию в `pyproject.toml` (`version`) и `src/fta/__init__.py` (`__version__`);
+   тест проверяет, что они совпадают.
+2. Влейте изменения в `main` и поставьте тег: `git tag v0.3.0 && git push origin v0.3.0`.
+3. Workflow соберёт Windows, macOS, Linux x64/arm64 и Android, выложит релиз с файлами и
+   `SHA256SUMS.txt`. Ссылки из раздела «Скачать» и проверка обновлений в приложении сразу
+   начнут указывать на него.
+
 ## Протоколы
 
 | Протокол | Схема | Что умеет |
 |---|---|---|
 | Это устройство | путь, `file://` | всё |
 | SFTP | `sftp` | всё; ключ хоста проверяется по `~/.ssh/known_hosts` |
+| SMB 2/3 | `smb://server/share/...` | всё; первый сегмент пути — общий ресурс |
 | FTP / FTPS | `ftp`, `ftps` | всё; листинг требует MLSD (RFC 3659) |
 | WebDAV | `dav`, `davs` | всё; стандартный WebDAV (RFC 4918) |
 | Amazon S3 и совместимые | `s3` | всё; папки — это префиксы ключей |
 | HTTP / HTTPS | `http`, `https` | скачивание, загрузка через PUT, без листинга |
-| SMB | `smb` | пока не реализован |
 
 ## Командная строка
 
@@ -97,14 +145,15 @@ src/
     │   ├── main.py          #   оболочка: тема, адаптивная навигация, диалоги
     │   ├── storage.py       #   подключения и настройки (JSON)
     │   ├── transfers.py     #   очередь передач на фоновых потоках
+    │   ├── updates.py       #   проверка и скачивание обновлений из GitHub Releases
     │   ├── ui.py            #   общие элементы и форматирование
-    │   └── views/           #   экраны: browser, transfers, connections, settings
+    │   └── views/           #   экраны: browser, transfers, connections, settings, update
     ├── core/                # ядро, не зависит от интерфейса
     │   ├── transport.py     #   интерфейс Transport, прогресс, ошибки библиотек
     │   ├── registry.py      #   схема URL → транспорт, плагины
     │   ├── manager.py       #   copy(): файлы и папки между любыми двумя транспортами
     │   └── endpoint.py, errors.py
-    ├── transports/          # local, http, webdav, ftp, sftp, s3, planned (smb)
+    ├── transports/          # local, http, webdav, ftp, sftp, smb, s3
     └── cli.py               # fta cp / ls / stat / mkdir / rm
 ```
 
@@ -125,8 +174,9 @@ pytest
 ```
 
 Тесты протоколов поднимают настоящие серверы прямо в процессе: FTP (pyftpdlib), WebDAV и
-HTTP (WsgiDAV + cheroot), SFTP (asyncssh) и S3 (moto). Сеть не нужна. CI запускает тесты на
-Python 3.10–3.13.
+HTTP (WsgiDAV + cheroot), SFTP (asyncssh), S3 (moto) и SMB (Samba). Сеть не нужна. Тест SMB
+запускает `smbd`, поэтому нужен установленный Samba (`apt-get install samba`) и root или
+`sudo` без пароля; иначе он пропускается. CI запускает тесты на Python 3.10–3.13.
 
 Приложение можно открыть в браузере (удобно для отладки интерфейса):
 
@@ -136,7 +186,10 @@ python -c "import flet as ft; from fta.app.main import main; ft.run(main, view=f
 
 ## Ограничения и планы
 
-- SMB, а также облачные диски с OAuth (Google Drive, Dropbox, OneDrive) пока не поддерживаются.
+- Облачные диски с OAuth (Google Drive, Dropbox, OneDrive) пока не поддерживаются.
+- На компьютере обновление скачивается автоматически, но заменить старую версию нужно
+  вручную: сборки не подписаны, и бесшумная замена самого себя без подписи ненадёжна.
+- Сборки для iOS нет: для неё нужен платный аккаунт Apple Developer.
 - Нет докачки (resume) и автоматических повторов при обрыве; повторить можно вручную.
 - Передача сервер → сервер требует места на диске под самый большой файл.
 - На Android и iOS доступ к файлам устройства ограничен песочницей приложения.

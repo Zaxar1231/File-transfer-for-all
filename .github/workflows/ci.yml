@@ -22,6 +22,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Install Samba for the SMB tests
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends samba
+
       - name: Install
         run: pip install -e ".[dev]"
 
