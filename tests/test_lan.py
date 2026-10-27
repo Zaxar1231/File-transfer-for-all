@@ -347,3 +347,54 @@ def test_receiver_falls_back_to_a_free_port(tmp_path, receiver):
         assert second.port not in (0, receiver.port)
     finally:
         second.stop()
+
+
+def _get(url):
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE  # a browser shows a warning here; the test just reads
+    try:
+        with urllib.request.urlopen(url, context=context, timeout=10) as response:
+            return response.status, response.headers, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers, error.read()
+
+
+def test_one_time_and_expiring_share_links(tmp_path, receiver):
+    import io
+    import zipfile
+
+    from fta.lan.service import LanService
+
+    service = LanService(tmp_path / "rx-data", receiver.directory, lambda o: False, discover=False)
+    service.receiver = receiver  # share through the running test receiver
+    report = tmp_path / "отчёт.pdf"
+    report.write_bytes(os.urandom(70_000))
+
+    url, share = service.share(report, ttl_seconds=600, one_time=True, address="127.0.0.1")
+    status, headers, body = _get(url)
+    assert status == 200 and body == report.read_bytes()
+    assert "UTF-8''%D0%BE%D1%82%D1%87%D1%91%D1%82.pdf" in headers["Content-Disposition"]
+    status, _, body = _get(url)
+    assert status == 410 and "больше не действует".encode() in body
+    assert share.status() == "скачана"
+
+    url, share = service.share(report, ttl_seconds=600, one_time=False, address="127.0.0.1")
+    assert _get(url)[0] == 200 and _get(url)[0] == 200 and share.downloads == 2
+    receiver.shares.revoke(share.token)
+    assert _get(url)[0] == 410
+
+    url, share = service.share(report, ttl_seconds=600, one_time=False, address="127.0.0.1")
+    share.expires_at = time.time() - 1
+    assert _get(url)[0] == 410 and share.status() == "истекла"
+    assert _get(url.rsplit("/", 1)[0] + "/guessed-token")[0] == 410
+
+    album = make_tree(tmp_path / "src")
+    url, _ = service.share(album, ttl_seconds=60, one_time=True, address="127.0.0.1")
+    status, _, body = _get(url)
+    names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+    assert status == 200 and "album/2024/notes.txt" in names and "album/cover.jpg" in names

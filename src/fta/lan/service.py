@@ -98,6 +98,12 @@ class LanService:
     def find(self, text: str) -> Peer | None:
         return self.discovery.find(text) if self.discovery else None
 
+    def share(self, path: Path, ttl_seconds: float, one_time: bool, address: str) -> tuple[str, Any]:
+        """A link anyone on the network can open in a browser to download ``path``."""
+        share = self.receiver.shares.add(path, ttl_seconds, one_time)
+        host = f"[{address}]" if ":" in address else address
+        return f"https://{host}:{self.receiver.port}/s/{share.token}", share
+
     def link(self, address: str) -> PeerLink:
         """What a QR code for this device carries."""
         return PeerLink(address, self.receiver.port, self.identity.fingerprint, self.identity.name)

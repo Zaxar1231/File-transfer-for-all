@@ -61,6 +61,8 @@ class NearbyView:
         self.incoming = ft.Column(spacing=8)
         self.incoming_title = ft.Text("Входящие", theme_style=ft.TextThemeStyle.TITLE_MEDIUM, visible=False)
         self._offer_rows: dict[str, ft.ListTile] = {}
+        self.shares_title = ft.Text("Ссылки на файлы", theme_style=ft.TextThemeStyle.TITLE_MEDIUM, visible=False)
+        self.shares = ft.Column(spacing=4)
         self._last_key: tuple[str, str] = ("", "")
         self._last_shown = 0.0
 
@@ -84,6 +86,8 @@ class NearbyView:
                         self.peers_empty,
                         self.incoming_title,
                         self.incoming,
+                        self.shares_title,
+                        self.shares,
                     ],
                     spacing=16,
                     scroll=ft.ScrollMode.AUTO,
@@ -116,11 +120,36 @@ class NearbyView:
         else:
             self.status.value = "Выключено: устройство не видно другим, отправлять можно по адресу"
             self.status.color = ft.Colors.ON_SURFACE_VARIANT
+        self._refresh_shares()
         peers = lan.peers if lan is not None else []
         self.peer_list.controls = [self._peer_card(peer) for peer in peers]
         self.peer_list.visible = bool(peers)
         self.peers_empty.visible = not peers
         safe_update(self.status, self.peer_list, self.peers_empty)
+
+    def _refresh_shares(self) -> None:
+        shares = self.app.lan.receiver.shares.listing() if self.app.lan else []
+        self.shares.controls = [
+            ft.ListTile(
+                leading=ft.Icon(ft.Icons.LINK if share.active else ft.Icons.LINK_OFF),
+                title=ft.Text(share.name),
+                subtitle=ft.Text(share.status(), color=ft.Colors.ON_SURFACE_VARIANT),
+                trailing=ft.IconButton(
+                    ft.Icons.BLOCK,
+                    tooltip="Отозвать ссылку",
+                    visible=share.active,
+                    on_click=lambda e, t=share.token: self._revoke(t),
+                ),
+            )
+            for share in shares
+        ]
+        self.shares_title.visible = bool(shares)
+        safe_update(self.shares_title, self.shares)
+
+    def _revoke(self, token: str) -> None:
+        if self.app.lan:
+            self.app.lan.receiver.shares.revoke(token)
+        self._refresh_shares()
 
     def _peer_card(self, peer: Peer) -> ft.Card:
         details = f"{peer.address}" + (f" · SSH {peer.ssh_port}" if peer.ssh_port else "") + (

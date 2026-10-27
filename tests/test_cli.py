@@ -51,3 +51,73 @@ def test_cp_failure_lands_in_the_journal(tmp_path, capsys, monkeypatch):
     assert main(["cp", "--retries", "2", str(tmp_path / "missing"), str(tmp_path)]) == 1  # not retried
     assert main(["history"]) == 0
     assert "failed" in capsys.readouterr().out
+
+
+def test_encrypt_decrypt_and_keygen(tmp_path, capsys, monkeypatch):
+    from fta.crypto import age
+
+    monkeypatch.setenv("FTA_DATA_DIR", str(tmp_path / "data"))
+    secret = tmp_path / "plans.txt"
+    secret.write_text("meet at noon")
+
+    assert main(["keygen"]) == 0
+    mine = capsys.readouterr().out.strip()
+    assert mine.startswith("age1") and main(["keygen"]) == 0 and capsys.readouterr().out.strip() == mine
+
+    assert main(["encrypt", "-r", mine, str(secret)]) == 0
+    sealed = tmp_path / "plans.txt.age"
+    assert age.is_encrypted(sealed)
+    secret.unlink()
+    assert main(["decrypt", str(sealed)]) == 0  # this device's own key opens it
+    assert secret.read_text() == "meet at noon"
+
+    answers = iter(["hunter22", "hunter22", "hunter22"])
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+    other = tmp_path / "other.txt"
+    other.write_text("by password")
+    assert main(["encrypt", str(other)]) == 0
+    other.unlink()
+    assert main(["decrypt", str(tmp_path / "other.txt.age")]) == 0
+    assert other.read_text() == "by password"
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "wrong-password")
+    assert main(["decrypt", str(tmp_path / "other.txt.age")]) == 1
+    assert "wrong passphrase" in capsys.readouterr().err
+
+
+def test_share_command_serves_one_download(tmp_path, monkeypatch):
+    import os
+    import re
+    import signal
+    import ssl
+    import subprocess
+    import sys
+    import urllib.request
+
+    payload = tmp_path / "photo.jpg"
+    payload.write_bytes(os.urandom(50_000))
+    env = {**os.environ, "FTA_DATA_DIR": str(tmp_path / "data")}
+    process = subprocess.Popen(
+        [sys.executable, "-m", "fta", "share", str(payload), "--ttl", "10m"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
+    try:
+        url = ""
+        for _ in range(5):
+            line = process.stdout.readline()
+            if line.startswith("https://"):
+                url = re.sub(r"https://[^/:]+", "https://127.0.0.1", line.strip())
+                break
+        assert url, "no link printed"
+        context = ssl.create_default_context()
+        context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+        with urllib.request.urlopen(url, context=context, timeout=10) as response:
+            assert response.read() == payload.read_bytes()
+        assert process.wait(15) == 0  # a one-time link ends the command after its download
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            process.wait(10)

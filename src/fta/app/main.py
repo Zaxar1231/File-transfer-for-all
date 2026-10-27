@@ -67,6 +67,7 @@ class App:
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service
+        self.clipboard = ft.Clipboard()
         self.updater = Updater(self)
         self.browser = BrowserView(self)
         self.transfers = TransfersView(self)

@@ -17,6 +17,7 @@ from typing import Any
 
 import asyncssh
 
+from fta.crypto.totp import Verifier
 from fta.server.passwords import check_password
 from fta.server.shell import Shell, ShellContext
 
@@ -35,6 +36,8 @@ class SshServerConfig:
     """User name → password hash from ``hash_password``. Empty: password login is off."""
     authorized_keys: Path | None = None
     """OpenSSH authorized_keys file; PuTTYgen shows the line to paste into it."""
+    totp_secret: str = ""
+    """With a secret, a password login also asks for the authenticator app's code (2FA)."""
 
 
 class SshServer:
@@ -116,17 +119,43 @@ class SshServer:
         if keys is not None and keys.exists():
             options["authorized_client_keys"] = str(keys)
 
+        verifier = Verifier(self.config.totp_secret) if self.config.totp_secret else None
+
+        def password_ok(username: str, password: str) -> bool:
+            stored = users.get(username)
+            return stored is not None and check_password(password, stored)
+
         class Server(asyncssh.SSHServer):
             def begin_auth(self, username: str) -> bool:
                 return True  # always authenticate
 
             def password_auth_supported(self) -> bool:
-                return bool(users)
+                return bool(users) and verifier is None  # with 2FA, passwords go through the two-step prompt
 
             def validate_password(self, username: str, password: str) -> bool:
-                stored = users.get(username)
-                ok = stored is not None and check_password(password, stored)
+                ok = password_ok(username, password)
                 logger.info("SSH password login for %r: %s", username, "ok" if ok else "refused")
+                return ok
+
+            def kbdint_auth_supported(self) -> bool:
+                return bool(users) and verifier is not None
+
+            def get_kbdint_challenge(self, username: str, lang: str, submethods: str) -> Any:
+                return (
+                    "File Transfer for All",
+                    "Password and the code from your authenticator app",
+                    "",
+                    [("Password: ", False), ("Authenticator code: ", True)],
+                )
+
+            def validate_kbdint_response(self, username: str, responses: list[str]) -> bool:
+                ok = (
+                    len(responses) == 2
+                    and password_ok(username, responses[0])
+                    and verifier is not None
+                    and verifier.check(responses[1])
+                )
+                logger.info("SSH 2FA login for %r: %s", username, "ok" if ok else "refused")
                 return ok
 
         root = str(self.config.root.resolve())
@@ -177,6 +206,7 @@ def server_from_store(store: Any, queue: Any, journal: Any, peers: Callable[[], 
         port=settings.server_port,
         users=users,
         authorized_keys=store.data_dir / "authorized_keys",
+        totp_secret=settings.server_totp_secret,
     )
     return SshServer(
         config,
