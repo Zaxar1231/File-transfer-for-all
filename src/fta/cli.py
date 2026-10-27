@@ -1,8 +1,9 @@
-"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | history | schemes``."""
+"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | serve | history | schemes``."""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 import time
 from collections.abc import Sequence
@@ -111,6 +112,53 @@ def _cp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace) -> int:
+    from fta.app.storage import Store
+    from fta.app.transfers import TransferQueue
+    from fta.server.passwords import hash_password
+    from fta.server.ssh import server_from_store
+
+    store = Store()
+    settings = store.settings
+    if args.root:
+        settings.server_root = str(Path(args.root).expanduser().resolve())
+    if args.port:
+        settings.server_port = args.port
+    if args.user:
+        settings.server_user = args.user
+    if args.set_password:
+        password = getpass.getpass(f"New password for {settings.server_user}: ")
+        if not password or password != getpass.getpass("Repeat: "):
+            print("fta: error: passwords are empty or do not match", file=sys.stderr)
+            return 1
+        settings.server_password_hash = hash_password(password)
+    store.save()
+    keys = store.data_dir / "authorized_keys"
+    if not settings.server_password_hash and not keys.exists():
+        print(f"fta: error: no way to log in yet; run `fta serve --set-password` or add keys to {keys}", file=sys.stderr)
+        return 1
+
+    journal = _journal()
+    server = server_from_store(store, TransferQueue(journal=journal), journal)
+    server.config.host = args.host
+    server.start()
+    print(f"Serving {store.server_root} over SSH/SFTP on port {server.port}")
+    print(f"Host key fingerprint: {server.fingerprint}")
+    for address in server.addresses():
+        print(f"  PuTTY:  host {address}, port {server.port}, user {settings.server_user}")
+        print(f"  psftp:  psftp -P {server.port} {settings.server_user}@{address}")
+        print(f"  ssh:    ssh -p {server.port} {settings.server_user}@{address}")
+    print(f"Public keys are read from {keys}. Stop with Ctrl+C.")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -124,6 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--retries", type=int, default=0, metavar="N", help="retry N times, resuming each time")
     _add_option_flag(cp, "--src-opt", "option for the source transport (repeatable)")
     _add_option_flag(cp, "--dst-opt", "option for the destination transport (repeatable)")
+
+    serve = commands.add_parser("serve", help="run the SSH/SFTP server for PuTTY, WinSCP, psftp, ssh")
+    serve.add_argument("--root", help="shared folder (default: from settings, else ~/FTA Shared)")
+    serve.add_argument("--port", type=int, help="port (default: from settings, 2222)")
+    serve.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all)")
+    serve.add_argument("--user", help="login name (default: from settings, fta)")
+    serve.add_argument("--set-password", action="store_true", help="ask for a new password and save its hash")
 
     history = commands.add_parser("history", help="show the transfer journal")
     history.add_argument("-n", type=int, default=20, help="how many entries (default 20)")
@@ -150,6 +205,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "cp":
             return _cp(args)
+        elif args.command == "serve":
+            return _serve(args)
         elif args.command == "history":
             journal = _journal()
             if args.csv:

@@ -105,6 +105,14 @@ class Settings:
     check_updates: bool = True
     """Look for a newer release on GitHub at start-up."""
     log_level: str = "INFO"
+    server_enabled: bool = False
+    """Run the SSH/SFTP server so PuTTY, WinSCP and other devices can connect."""
+    server_port: int = 2222
+    server_root: str = ""
+    """Shared folder for the server; empty means "FTA Shared" in the home folder."""
+    server_user: str = "fta"
+    server_password_hash: str = ""
+    """PBKDF2 hash (fta.server.passwords); the password itself is never stored."""
 
 
 def default_data_dir() -> Path:
@@ -222,6 +230,20 @@ class Store:
     def remove(self, connection_id: str) -> None:
         self.connections = [c for c in self.connections if c.id != connection_id]
         self.save()
+
+    def resolve(self, text: str) -> tuple[str, dict[str, Any]]:
+        """``@name:/path`` names a saved connection; anything else is a URL or path as is."""
+        if not text.startswith("@"):
+            return text, {}
+        name, _, path = text[1:].partition(":")
+        for connection in self.connections:
+            if connection.name.casefold() == name.casefold() or connection.id == name:
+                return connection.url(path or connection.path), connection.transport_options()
+        raise LookupError(f"no saved connection named {name!r}")
+
+    @property
+    def server_root(self) -> Path:
+        return Path(self.settings.server_root) if self.settings.server_root else Path.home() / "FTA Shared"
 
 
 def _drop_none(data: dict[str, Any]) -> dict[str, Any]:

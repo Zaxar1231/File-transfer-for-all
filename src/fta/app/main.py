@@ -41,10 +41,13 @@ class App:
         self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers, journal=self.journal)
         self._asked_password: set[str] = set()
         self.index = 0
+        self.server = None
+        self.server_error = ""
 
         page.title = APP_TITLE
         page.padding = 0
         page.on_resize = lambda e: self.layout()
+        page.on_close = lambda e: self.shutdown()
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service
@@ -102,6 +105,37 @@ class App:
         self.layout()
         if self.store.settings.check_updates:
             self.updater.check_in_background(silent=True)
+        self.apply_server()
+
+    # --- SSH/SFTP server --------------------------------------------------------------
+
+    def apply_server(self) -> None:
+        """Start or stop the SSH/SFTP server to match the settings; errors land in server_error."""
+        from fta.server.ssh import server_from_store
+
+        if self.server is not None:
+            self.server.stop()
+            self.server = None
+        self.server_error = ""
+        if self.store.settings.server_enabled:
+            server = server_from_store(self.store, self.queue, self.journal, peers=self.peer_names)
+            try:
+                server.start()
+            except Exception as exc:  # port taken, no permission: shown in Settings
+                self.server_error = str(exc) or type(exc).__name__
+            else:
+                self.server = server
+        self.settings.refresh_server()
+
+    def shutdown(self) -> None:
+        """Release what outlives the window: the server's port."""
+        if self.server is not None:
+            self.server.stop()
+            self.server = None
+
+    def peer_names(self) -> list[str]:
+        """Devices on the local network, for the server shell's `peers`."""
+        return []
 
     # --- layout and navigation ------------------------------------------------------
 
