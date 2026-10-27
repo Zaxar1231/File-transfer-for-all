@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import urllib.error
+import urllib.parse
 import urllib.request
 from email.utils import parsedate_to_datetime
 from http.client import HTTPResponse
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
@@ -83,6 +84,11 @@ class HttpTransport(Transport):
             return urllib.request.urlopen(request, timeout=self.float_option("timeout", 30))
         except urllib.error.HTTPError as exc:
             exc.close()
+            location = urlsplit(urllib.parse.urljoin(url, exc.headers.get("Location", ""))).path
+            if exc.code in (301, 308) and not (remote or "/").endswith("/") and location == quote(remote) + "/":
+                # Apache and nginx answer a folder path without "/" with a redirect, which urllib
+                # follows only for GET; PROPFIND and friends are simply sent again to the folder.
+                return self._send(remote + "/", method=method, data=data, headers=headers)
             if exc.code == 404:
                 raise NotFound(f"{method} {url}: 404 Not Found") from exc
             raise TransferError(f"{method} {url}: HTTP {exc.code} {exc.reason}") from exc

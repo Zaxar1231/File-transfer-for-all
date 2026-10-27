@@ -135,7 +135,7 @@ def _serve(args: argparse.Namespace) -> int:
     settings = store.settings
     if args.root:
         settings.server_root = str(Path(args.root).expanduser().resolve())
-    if args.port:
+    if args.port is not None:  # 0 is a real choice: any free port
         settings.server_port = args.port
     if args.user:
         settings.server_user = args.user
@@ -439,8 +439,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     cp = commands.add_parser("cp", help="copy a file or, with -r, a directory")
-    cp.add_argument("source")
-    cp.add_argument("destination")
+    cp.add_argument("source", help="file or folder: a path, a URL or @connection:/path")
+    cp.add_argument("destination", help="where to put it; a folder or a path ending in / receives it by name")
     cp.add_argument("-r", "--recursive", action="store_true", help="copy directories recursively")
     cp.add_argument("--resume", action="store_true", help="continue partial files instead of resending them")
     cp.add_argument("--verify", action="store_true", help="compare SHA-256 of both sides after each file")
@@ -449,8 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_option_flag(cp, "--dst-opt", "option for the destination transport (repeatable)")
 
     sync = commands.add_parser("sync", help="mirror a folder; changed files send only their changed blocks")
-    sync.add_argument("source")
-    sync.add_argument("destination")
+    sync.add_argument("source", help="the folder to mirror")
+    sync.add_argument("destination", help="the folder that becomes its copy")
     sync.add_argument("--delete", action="store_true", help="also delete destination files missing from the source")
     _add_option_flag(sync, "--src-opt", "option for the source transport (repeatable)")
     _add_option_flag(sync, "--dst-opt", "option for the destination transport (repeatable)")
@@ -492,7 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("keygen", help="show this device's age public key, for others to encrypt to")
 
     share = commands.add_parser("share", help="give a file or folder away by a one-time link and QR code")
-    share.add_argument("path")
+    share.add_argument("path", help="file or folder (sent as a zip)")
     share.add_argument("--ttl", default="1h", help="how long the link works: 10m, 1h, 1d (default 1h)")
     share.add_argument("--many", action="store_true", help="allow more than one download until it expires")
     share.add_argument("--port", type=int, default=0, help="port (default: any free one)")
@@ -516,7 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("rm", "delete a file or an empty directory"),
     ):
         command = commands.add_parser(name, help=help_text)
-        command.add_argument("location")
+        command.add_argument("location", help="a path, a URL or @connection:/path")
         _add_option_flag(command, "--opt", "transport option (repeatable)")
         if name == "mkdir":
             command.add_argument("-p", "--parents", action="store_true", help="no error if it exists")
@@ -614,6 +614,9 @@ def _run(args: argparse.Namespace) -> int:
                     transport.delete(path)
     except hostkeys.UnknownHostKey:
         raise
+    except (EOFError, KeyboardInterrupt):
+        print("\nfta: cancelled", file=sys.stderr)
+        return 130
     except (TransferError, OSError, ValueError) as exc:
         print(f"fta: error: {exc}", file=sys.stderr)
         return 1

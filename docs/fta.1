@@ -1,0 +1,275 @@
+.TH FTA 1 "" "fta 0.9.0" "File Transfer for All"
+.SH NAME
+fta \- transfer files over SFTP, FTP, SMB, WebDAV, S3, HTTP, clouds and to nearby devices
+.SH SYNOPSIS
+.B fta
+[\-h] [\-\-limit LIMIT] {cp,sync,serve,send,receive,cloud,encrypt,decrypt,keygen,share,stats,ёж,hedgehog,peers,history,ls,stat,mkdir,rm,schemes} ...
+.SH DESCRIPTION
+fta is the command line of File Transfer for All. Locations are local paths, URLs such as sftp://user@host/dir, smb://server/share, ftp://, dav://, s3://bucket, rclone://cloud/ and @connection:/path for connections saved in the app.
+.SH GLOBAL OPTIONS
+.TP
+.B \-h, \-\-help
+show this help message and exit
+.TP
+.B \-\-limit
+speed limit for all transfers, e.g. 500K or 2M (bytes per second)
+.SH COMMANDS
+.SS cp
+copy a file or, with \-r, a directory
+.PP
+.B fta cp [\-h] [\-r] [\-\-resume] [\-\-verify] [\-\-retries N] [\-\-src\-opt KEY=VALUE] [\-\-dst\-opt KEY=VALUE] source destination
+.TP
+.B source
+file or folder: a path, a URL or @connection:/path
+.TP
+.B destination
+where to put it; a folder or a path ending in / receives it by name
+.TP
+.B \-r, \-\-recursive
+copy directories recursively
+.TP
+.B \-\-resume
+continue partial files instead of resending them
+.TP
+.B \-\-verify
+compare SHA\-256 of both sides after each file
+.TP
+.B \-\-retries
+retry N times, resuming each time
+.TP
+.B \-\-src\-opt
+option for the source transport (repeatable)
+.TP
+.B \-\-dst\-opt
+option for the destination transport (repeatable)
+.SS sync
+mirror a folder; changed files send only their changed blocks
+.PP
+.B fta sync [\-h] [\-\-delete] [\-\-src\-opt KEY=VALUE] [\-\-dst\-opt KEY=VALUE] source destination
+.TP
+.B source
+the folder to mirror
+.TP
+.B destination
+the folder that becomes its copy
+.TP
+.B \-\-delete
+also delete destination files missing from the source
+.TP
+.B \-\-src\-opt
+option for the source transport (repeatable)
+.TP
+.B \-\-dst\-opt
+option for the destination transport (repeatable)
+.SS serve
+run the SSH/SFTP server for PuTTY, WinSCP, psftp, ssh
+.PP
+.B fta serve [\-h] [\-\-root ROOT] [\-\-port PORT] [\-\-host HOST] [\-\-user USER] [\-\-set\-password]
+.TP
+.B \-\-root
+shared folder (default: from settings, else ~/FTA Shared)
+.TP
+.B \-\-port
+port (default: from settings, 2222)
+.TP
+.B \-\-host
+address to listen on (default: all)
+.TP
+.B \-\-user
+login name (default: from settings, fta)
+.TP
+.B \-\-set\-password
+ask for a new password and save its hash
+.SS send
+send files or folders to a nearby device
+.PP
+.B fta send [\-h] [\-\-pin PIN] [\-\-wait WAIT] target PATH [PATH ...]
+.TP
+.B target
+device name (see `fta peers`), fta:// link from its QR code, or host[:port]
+.TP
+.B PATH
+
+.TP
+.B \-\-pin
+PIN shown on the receiving device, if it asks for one
+.TP
+.B \-\-wait
+seconds to look for the device by name (default 5)
+.SS receive
+accept files from nearby devices
+.PP
+.B fta receive [\-h] [\-\-dir DIR] [\-\-port PORT] [\-\-pin PIN] [\-y] [\-\-qr]
+.TP
+.B \-\-dir
+where to save (default: from settings, else Downloads/FTA)
+.TP
+.B \-\-port
+port (default 53318; 0 picks a free one)
+.TP
+.B \-\-pin
+require this PIN from senders
+.TP
+.B \-y, \-\-yes
+accept every offer without asking
+.TP
+.B \-\-qr
+print a QR code with this device\(aqs link
+.SS cloud
+cloud drives via rclone: list, add, remove, install
+.PP
+.B fta cloud [\-h] {list,add,remove,install} [name] [type] [KEY=VALUE ...]
+.TP
+.B action
+
+.TP
+.B name
+name for the cloud, used as rclone://NAME/
+.TP
+.B type
+drive, dropbox, yandex, onedrive, mailru, webdav, …
+.TP
+.B KEY=VALUE
+e.g. user=me pass=secret
+.SS encrypt
+encrypt files to FILE.age (age format; asks for a passphrase)
+.PP
+.B fta encrypt [\-h] [\-r RECIPIENT] FILE [FILE ...]
+.TP
+.B FILE
+
+.TP
+.B \-r, \-\-recipient
+age1… public key instead of a passphrase
+.SS decrypt
+decrypt FILE.age (with this device\(aqs key or a passphrase)
+.PP
+.B fta decrypt [\-h] [\-i IDENTITY] FILE [FILE ...]
+.TP
+.B FILE
+
+.TP
+.B \-i, \-\-identity
+file with an AGE\-SECRET\-KEY\-1…
+.SS keygen
+show this device\(aqs age public key, for others to encrypt to
+.PP
+.B fta keygen [\-h]
+.SS share
+give a file or folder away by a one\-time link and QR code
+.PP
+.B fta share [\-h] [\-\-ttl TTL] [\-\-many] [\-\-port PORT] path
+.TP
+.B path
+file or folder (sent as a zip)
+.TP
+.B \-\-ttl
+how long the link works: 10m, 1h, 1d (default 1h)
+.TP
+.B \-\-many
+allow more than one download until it expires
+.TP
+.B \-\-port
+port (default: any free one)
+.SS stats
+totals from the journal; \-\-card writes a shareable SVG
+.PP
+.B fta stats [\-h] [\-\-days DAYS] [\-\-card FILE.svg]
+.TP
+.B \-\-days
+only the last N days
+.TP
+.B \-\-card
+write a summary card picture
+.SS ёж
+a hedgehog
+.PP
+.B fta ёж [\-h]
+.SS peers
+list FTA devices on the local network
+.PP
+.B fta peers [\-h] [\-\-wait WAIT]
+.TP
+.B \-\-wait
+seconds to listen (default 3)
+.SS history
+show the transfer journal
+.PP
+.B fta history [\-h] [\-n N] [\-\-csv FILE]
+.TP
+.B \-n
+how many entries (default 20)
+.TP
+.B \-\-csv
+export the whole journal to a CSV file
+.SS ls
+list a directory
+.PP
+.B fta ls [\-h] [\-\-opt KEY=VALUE] location
+.TP
+.B location
+a path, a URL or @connection:/path
+.TP
+.B \-\-opt
+transport option (repeatable)
+.SS stat
+show one file or directory
+.PP
+.B fta stat [\-h] [\-\-opt KEY=VALUE] location
+.TP
+.B location
+a path, a URL or @connection:/path
+.TP
+.B \-\-opt
+transport option (repeatable)
+.SS mkdir
+create a directory
+.PP
+.B fta mkdir [\-h] [\-\-opt KEY=VALUE] [\-p] location
+.TP
+.B location
+a path, a URL or @connection:/path
+.TP
+.B \-\-opt
+transport option (repeatable)
+.TP
+.B \-p, \-\-parents
+no error if it exists
+.SS rm
+delete a file or an empty directory
+.PP
+.B fta rm [\-h] [\-\-opt KEY=VALUE] location
+.TP
+.B location
+a path, a URL or @connection:/path
+.TP
+.B \-\-opt
+transport option (repeatable)
+.SS schemes
+list supported URL schemes
+.PP
+.B fta schemes [\-h]
+.SH FILES
+.TP
+.I ~/.config/fta/config.toml
+settings and saved connections (FTA_CONFIG, FTA_DATA_DIR change it; an fta\-data folder next to the program makes it portable)
+.TP
+.I ~/.config/fta/journal.jsonl
+the transfer journal (fta history, fta stats)
+.SH ENVIRONMENT
+.TP
+.B FTA_<SETTING>
+any setting, e.g. FTA_RETRIES=5 or FTA_SPEED_LIMIT_KIB=2048
+.TP
+.B FTA_RCLONE
+the rclone program to use for clouds
+.SH EXAMPLES
+.nf
+fta cp \-\-resume \-\-verify https://example.com/big.iso ./
+fta sync ./photos sftp://me@nas.local/backup/photos \-\-delete
+fta send "Laptop" ./report.pdf
+fta share ./photos \-\-ttl 1d
+fta encrypt \-r age1... secret.pdf
+.fi
+.SH SEE ALSO
+Project page: https://github.com/Zaxar1231/File\-transfer\-for\-all
