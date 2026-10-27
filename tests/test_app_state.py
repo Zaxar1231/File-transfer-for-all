@@ -232,3 +232,27 @@ def test_app_modules_import():
     """The UI modules at least import and wire up against the installed Flet."""
     pytest.importorskip("flet")
     import fta.app.main  # noqa: F401
+
+
+def test_quick_connections_are_not_saved(tmp_path):
+    from fta.app.storage import Connection, Store
+
+    store = Store(tmp_path / "config.toml", environ={})
+    first = store.add_temporary(Connection(name="nas", scheme="sftp", host="192.168.1.5", username="me", password="pw"))
+    again = store.add_temporary(Connection(name="nas", scheme="sftp", host="192.168.1.5", username="me"))
+    assert again is first and again.password == "pw"  # one entry per place, password kept
+    assert store.get(first.id) is first
+    store.save()
+    assert "192.168.1.5" not in (tmp_path / "config.toml").read_text()
+    store.upsert(first)  # "save" turns it into a normal connection
+    assert store.temporary == [] and store.connections == [first]
+
+
+def test_split_address():
+    pytest.importorskip("flet")
+    from fta.app.views.connections import split_address
+
+    assert split_address("192.168.1.5", 22) == ("192.168.1.5", 22)
+    assert split_address(" nas.local:2222 ", None) == ("nas.local", 2222)
+    assert split_address("[fe80::1]:2200", None) == ("fe80::1", 2200)
+    assert split_address("fe80::1", 22) == ("fe80::1", 22)

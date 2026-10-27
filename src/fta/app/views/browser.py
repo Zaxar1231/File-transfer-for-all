@@ -16,6 +16,7 @@ import flet as ft
 from fta.app.storage import LOCAL_ID, Connection
 from fta.app.transfers import JobState, TransferJob
 from fta.app.ui import empty_state, format_time, headline, human_size, protocol_icon, safe_update, short_path
+from fta.core.hostkeys import HostKeyChanged, UnknownHostKey
 from fta.core.registry import open_transport
 from fta.core.transport import RemoteEntry, Transport, join_path
 
@@ -128,7 +129,7 @@ class Pane:
         options = [ft.DropdownOption(key=LOCAL_ID, text=LOCAL_NAME, leading_icon=ft.Icons.COMPUTER)]
         options += [
             ft.DropdownOption(key=c.id, text=c.name, leading_icon=protocol_icon(c.scheme))
-            for c in self.app.store.connections
+            for c in [*self.app.store.connections, *self.app.store.temporary]
         ]
         self.source.options = options
         if self.connection and not self.app.store.get(self.connection.id):
@@ -170,6 +171,11 @@ class Pane:
         try:
             with self.open_transport() as transport:
                 entries = transport.listdir(path)
+        except (UnknownHostKey, HostKeyChanged) as exc:  # the user decides, as in PuTTY
+            if generation == self._generation:
+                self._show_error(str(exc))
+                self.app.confirm_host_key(exc, then=self.load)
+            return
         except Exception as exc:  # shown in the pane; the user can retry or switch source
             if generation == self._generation:
                 self._show_error(str(exc) or type(exc).__name__)

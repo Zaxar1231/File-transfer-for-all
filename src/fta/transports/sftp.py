@@ -6,7 +6,9 @@ import stat as stat_mode
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from fta.core import hostkeys
 from fta.core.errors import NotFound, TransferError
+from fta.core.hostkeys import HostKeyChanged, UnknownHostKey
 from fta.core.registry import register
 from fta.core.transport import (
     Progress,
@@ -24,8 +26,9 @@ from fta.core.transport import (
 class SftpTransport(Transport):
     """Options: username, password, key_file, known_hosts, accept_unknown_host, timeout.
 
-    Host keys are checked against ~/.ssh/known_hosts (plus ``known_hosts`` if
-    given); unknown hosts are rejected unless ``accept_unknown_host=true``.
+    Host keys are checked against ~/.ssh/known_hosts and the app's known_hosts
+    (``known_hosts`` overrides it). An unknown host raises UnknownHostKey with its
+    fingerprint for the user to confirm, unless ``accept_unknown_host=true``.
     """
 
     schemes = ("sftp",)
@@ -43,25 +46,36 @@ class SftpTransport(Transport):
         self.library_errors = (paramiko.SSHException,)
 
         client = paramiko.SSHClient()
-        client.load_system_host_keys()
-        if known_hosts := self.options.get("known_hosts"):
-            client.load_host_keys(known_hosts)
-        accept = self.bool_option("accept_unknown_host")
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy() if accept else paramiko.RejectPolicy())
+        known_hosts = self.options.get("known_hosts")
         try:
-            client.connect(
-                self.endpoint.host or "",
-                port=self.endpoint.port or 22,
-                username=self.username,
-                password=self.password,
-                key_filename=self.options.get("key_file"),
-                timeout=self.float_option("timeout", 30),
-            )
+            if self.bool_option("accept_unknown_host"):
+                client.load_system_host_keys()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(self.endpoint.host or "", port=self.endpoint.port or 22, **self._login())
+            else:
+                hostkeys.connect(
+                    client,
+                    self.endpoint.host or "",
+                    self.endpoint.port or 22,
+                    Path(known_hosts) if known_hosts else None,
+                    **self._login(),
+                )
             self._sftp = client.open_sftp()
+        except (UnknownHostKey, HostKeyChanged):
+            client.close()
+            raise
         except (paramiko.SSHException, OSError) as exc:
             client.close()
             raise TransferError(f"sftp: cannot connect to {self.endpoint.netloc}: {exc}") from exc
         self._client = client
+
+    def _login(self) -> dict[str, Any]:
+        return {
+            "username": self.username,
+            "password": self.password,
+            "key_filename": self.options.get("key_file"),
+            "timeout": self.float_option("timeout", 30),
+        }
 
     def close(self) -> None:
         if self._sftp is not None:

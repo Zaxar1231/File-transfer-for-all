@@ -348,7 +348,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from fta.core import hostkeys
+
     args = build_parser().parse_args(argv)
+    hostkeys.DEFAULT_PATH = default_data_dir() / "known_hosts"
+    while True:
+        try:
+            return _run(args)
+        except hostkeys.UnknownHostKey as unknown:
+            # As PuTTY and ssh do: show the fingerprint and let the user decide.
+            print(f"The server {unknown.host}:{unknown.port} is not known yet.", file=sys.stderr)
+            print(f"Its {unknown.key_type} key fingerprint is {unknown.fingerprint}", file=sys.stderr)
+            if not sys.stdin.isatty():
+                print("fta: error: unknown host key; run interactively once to trust it", file=sys.stderr)
+                return 1
+            if input("Trust it and continue? [y/N] ").strip().lower() not in ("y", "yes", "д", "да"):
+                return 1
+            hostkeys.trust(unknown.host, unknown.port, unknown.key)
+
+
+def _run(args: argparse.Namespace) -> int:
+    from fta.core import hostkeys
+
     try:
         if args.command == "cp":
             return _cp(args)
@@ -382,6 +403,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     transport.mkdir(path, exist_ok=args.parents)
                 else:
                     transport.delete(path)
+    except hostkeys.UnknownHostKey:
+        raise
     except (TransferError, OSError) as exc:
         print(f"fta: error: {exc}", file=sys.stderr)
         return 1

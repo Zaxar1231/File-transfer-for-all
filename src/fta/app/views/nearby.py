@@ -142,12 +142,27 @@ class NearbyView:
                     items=[
                         ft.PopupMenuItem(content="Файлы…", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=lambda e, p=peer: self._pick_files(p)),
                         ft.PopupMenuItem(content="Папку…", icon=ft.Icons.FOLDER_OUTLINED, on_click=lambda e, p=peer: self._pick_folder(p)),
+                        *(
+                            [
+                                ft.PopupMenuItem(
+                                    content="Файлы и терминал по SSH…",
+                                    icon=ft.Icons.TERMINAL,
+                                    on_click=lambda e, p=peer: self._quick(p),
+                                ),
+                            ]
+                            if peer.ssh_port
+                            else []
+                        ),
                     ],
                 ),
                 on_click=lambda e, p=peer: self._pick_files(p),
                 content_padding=ft.Padding.symmetric(horizontal=16, vertical=4),
             ),
         )
+
+    def _quick(self, peer: Peer) -> None:
+        """A device whose SSH server is on: its shared folder or its transfer shell, by address."""
+        self.app.quick_connect(host=peer.address, port=peer.ssh_port, username="fta", name=peer.name)
 
     def _on_switch(self, e: ft.Event[ft.Switch]) -> None:
         self.app.store.settings.lan_enabled = bool(e.control.value)

@@ -37,6 +37,7 @@ dependencies = [
     "cryptography>=42",  # self-signed certificate for direct LAN transfers
     "zeroconf>=0.132",   # finding nearby devices (mDNS/Bonjour)
     "segno>=1.6",        # QR codes, no image library needed
+    "pyte>=0.8",         # VT100/xterm screen for the built-in SSH terminal
 ]
 
 [project.urls]

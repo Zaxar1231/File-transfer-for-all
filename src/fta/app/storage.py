@@ -169,6 +169,8 @@ class Store:
         self.path = path or Path(environ.get("FTA_CONFIG") or default_data_dir() / "config.toml")
         self.data_dir = self.path.parent
         self.connections: list[Connection] = []
+        self.temporary: list[Connection] = []
+        """Quick connections by address: usable until the app closes, never written to disk."""
         self.overrides = env_overrides(environ)
         self._file_settings = Settings()
         self.settings = Settings(**self.overrides)
@@ -225,9 +227,19 @@ class Store:
             os.replace(tmp, self.path)
 
     def get(self, connection_id: str) -> Connection | None:
-        return next((c for c in self.connections if c.id == connection_id), None)
+        return next((c for c in [*self.connections, *self.temporary] if c.id == connection_id), None)
+
+    def add_temporary(self, connection: Connection) -> Connection:
+        """Reuse an open quick connection to the same place, so the source list stays short."""
+        for existing in self.temporary:
+            if existing.url() == connection.url():
+                existing.password = connection.password or existing.password
+                return existing
+        self.temporary.append(connection)
+        return connection
 
     def upsert(self, connection: Connection) -> None:
+        self.temporary = [c for c in self.temporary if c.id != connection.id]  # saving makes it permanent
         for index, existing in enumerate(self.connections):
             if existing.id == connection.id:
                 self.connections[index] = connection

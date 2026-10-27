@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import flet as ft
 
@@ -14,10 +15,14 @@ from fta.app.views.browser import BrowserView
 from fta.app.views.connections import ConnectionsView
 from fta.app.views.nearby import NearbyView, offer_text
 from fta.app.views.settings import SettingsView
+from fta.app.views.terminal import TerminalView
 from fta.app.views.transfers import TransfersView
 from fta.app.views.update import Updater
 
 APP_TITLE = "File Transfer for All"
+MONO_FONT = "FtaMono"
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+"""src/assets in a checkout and in `flet build`; a pip install has none and uses system fonts."""
 COMPACT_WIDTH = 720
 """Below this width the app uses the phone layout (Material 3 "compact" + "medium" classes)."""
 
@@ -50,8 +55,12 @@ class App:
 
         page.title = APP_TITLE
         page.padding = 0
+        page.fonts = {MONO_FONT: "fonts/DejaVuSansMono.ttf"}  # the terminal needs equal-width letters
         page.on_resize = lambda e: self.layout()
         page.on_close = lambda e: self.shutdown()
+        from fta.core import hostkeys
+
+        hostkeys.DEFAULT_PATH = self.store.data_dir / "known_hosts"
         self.apply_theme()
 
         self.picker = ft.FilePicker()  # registers itself as a page service
@@ -61,7 +70,10 @@ class App:
         self.nearby = NearbyView(self)
         self.connections = ConnectionsView(self)
         self.settings = SettingsView(self)
-        self.views = [self.browser, self.transfers, self.nearby, self.connections, self.settings]
+        self.terminal = TerminalView(self)
+        # The terminal is the one screen without a tab: it opens from a connection or a device.
+        self.views = [self.browser, self.transfers, self.nearby, self.connections, self.settings, self.terminal]
+        page.on_keyboard_event = self._on_keyboard
 
         # The active-transfers badge only renders on an Icon (not on the destination itself),
         # and the selected tab shows selected_icon, so the rail's and the bar's icons all carry it.
@@ -145,6 +157,7 @@ class App:
         if self.lan is not None:
             self.lan.stop()
             self.lan = None
+        self.terminal.disconnect()
 
     # --- local network ---------------------------------------------------------------
 
@@ -214,8 +227,16 @@ class App:
         self.page.update()
 
     def go(self, index: int) -> None:
-        self.index = self.rail.selected_index = self.bar.selected_index = index
+        self.index = index
+        if index < len(_SECTIONS):
+            self.rail.selected_index = self.bar.selected_index = index
+        else:
+            self.rail.selected_index = None  # a screen without a tab
         self.layout()
+
+    def _on_keyboard(self, e: ft.KeyboardEvent) -> None:
+        if self.views[self.index] is self.terminal:
+            self.terminal.on_keyboard(e)
 
     def update_badge(self) -> None:
         active = self.queue.active_count
@@ -240,9 +261,65 @@ class App:
         self.browser.right.refresh_sources()
         self.page.update()
 
-    def open_in_browser(self, connection: Connection) -> None:
+    def open_in_browser(self, connection: Connection, refresh: bool = False) -> None:
+        if refresh:  # a quick connection the source lists have not seen yet
+            self.browser.left.refresh_sources()
+            self.browser.right.refresh_sources()
         self.go(0)
         self.browser.open_connection(connection)
+
+    def open_terminal(self, connection: Connection) -> None:
+        self.ensure_password(connection, lambda: self.terminal.open(connection))
+
+    def quick_connect(self, **prefill) -> None:
+        from fta.app.views.connections import QuickConnectDialog
+
+        QuickConnectDialog(self, **prefill).show()
+
+    def confirm_host_key(self, exc, then: Callable[[], None]) -> None:
+        """Ask whether to trust a server's key, as PuTTY does on the first connection."""
+        from fta.core import hostkeys
+
+        changed = isinstance(exc, hostkeys.HostKeyChanged)
+
+        def trust(_: ft.Event[ft.Control]) -> None:
+            hostkeys.trust(exc.host, exc.port, exc.key)
+            self.page.pop_dialog()
+            then()
+
+        text = (
+            "Ключ сервера ИЗМЕНИЛСЯ с прошлого подключения. Если сервер не переустанавливали, "
+            "кто-то может перехватывать соединение. Не продолжайте, пока не сверите отпечаток "
+            "с администратором."
+            if changed
+            else "Это первое подключение к серверу. Сверьте отпечаток с тем, что показывает сам сервер "
+            "(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub или раздел SSH-сервера в настройках "
+            "File Transfer for All), и только потом доверяйте."
+        )
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                icon=ft.Icon(ft.Icons.GPP_MAYBE_OUTLINED if changed else ft.Icons.KEY_OUTLINED, color=ft.Colors.ERROR if changed else None),
+                title=ft.Text("Ключ сервера изменился!" if changed else f"Новый сервер {exc.host}"),
+                content=ft.Column(
+                    [
+                        ft.Text(text, color=ft.Colors.ERROR if changed else None),
+                        ft.Text(f"{exc.host}:{exc.port}\n{exc.key_type}\n{exc.fingerprint}", selectable=True, font_family="monospace"),
+                    ],
+                    tight=True,
+                    spacing=12,
+                    width=460,
+                ),
+                actions=[
+                    ft.TextButton("Отмена", on_click=lambda e: self.page.pop_dialog()),
+                    ft.FilledButton(
+                        "Заменить ключ" if changed else "Доверять",
+                        on_click=trust,
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.ERROR, color=ft.Colors.ON_ERROR) if changed else None,
+                    ),
+                ],
+            )
+        )
 
     def ensure_password(self, connection: Connection, then: Callable[[], None]) -> None:
         """Ask once per session for a password that was not saved, then continue."""
@@ -310,4 +387,4 @@ def main(page: ft.Page) -> None:
 
 
 def run() -> None:
-    ft.run(main)
+    ft.run(main, assets_dir=str(ASSETS_DIR) if ASSETS_DIR.is_dir() else "assets")
