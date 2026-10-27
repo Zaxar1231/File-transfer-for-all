@@ -24,6 +24,7 @@ BUILTIN_MODULES = (
     "fta.transports.sftp",
     "fta.transports.s3",
     "fta.transports.smb",
+    "fta.transports.rclone",
 )
 
 _registry: dict[str, type[Transport]] = {}

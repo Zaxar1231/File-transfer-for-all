@@ -290,6 +290,30 @@ def _send(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cloud(args: argparse.Namespace) -> int:
+    from fta.tools import rclone
+
+    if args.action == "install":
+        print(f"installed {rclone.install()}")
+    elif args.action == "list":
+        if rclone.find() is None:
+            print("rclone is not installed; run `fta cloud install`")
+            return 1
+        for remote in rclone.remotes():
+            print(f"{remote.name:20} {remote.label:20} rclone://{remote.name}/")
+    elif args.action == "add":
+        if not args.name or not args.type:
+            print("usage: fta cloud add NAME TYPE [KEY=VALUE…]  (TYPE: " + ", ".join(rclone.PROVIDERS) + ")", file=sys.stderr)
+            return 2
+        if args.type in rclone.OAUTH:
+            print("A browser window opens to sign in…", file=sys.stderr)
+        rclone.create_remote(args.name, args.type, dict(args.params))
+        print(f"added: rclone://{args.name}/")
+    elif args.action == "remove":
+        rclone.delete_remote(args.name)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -324,6 +348,12 @@ def build_parser() -> argparse.ArgumentParser:
     receive.add_argument("-y", "--yes", action="store_true", help="accept every offer without asking")
     receive.add_argument("--qr", action="store_true", help="print a QR code with this device's link")
 
+    cloud = commands.add_parser("cloud", help="cloud drives via rclone: list, add, remove, install")
+    cloud.add_argument("action", choices=["list", "add", "remove", "install"])
+    cloud.add_argument("name", nargs="?", help="name for the cloud, used as rclone://NAME/")
+    cloud.add_argument("type", nargs="?", help="drive, dropbox, yandex, onedrive, mailru, webdav, …")
+    cloud.add_argument("params", nargs="*", type=_key_value, metavar="KEY=VALUE", help="e.g. user=me pass=secret")
+
     peers = commands.add_parser("peers", help="list FTA devices on the local network")
     peers.add_argument("--wait", type=float, default=3, help="seconds to listen (default 3)")
 
@@ -356,6 +386,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     hostkeys.DEFAULT_PATH = default_data_dir() / "known_hosts"
+    from fta.tools import rclone
+
+    rclone.DATA_DIR = default_data_dir()
     while True:
         try:
             return _run(args)
@@ -385,6 +418,8 @@ def _run(args: argparse.Namespace) -> int:
             return _receive(args)
         elif args.command == "peers":
             return _peers(args)
+        elif args.command == "cloud":
+            return _cloud(args)
         elif args.command == "history":
             journal = _journal()
             if args.csv:
