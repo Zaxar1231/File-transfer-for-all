@@ -108,7 +108,9 @@ class LanService:
         """What a QR code for this device carries."""
         return PeerLink(address, self.receiver.port, self.identity.fingerprint, self.identity.name)
 
-    def sender(self, target: Peer | PeerLink, paths: list[Path], pin: str = "") -> Any:
+    def sender(
+        self, target: Peer | PeerLink, paths: list[Path], pin: str = "", message: str = "", burn_after: float | None = None
+    ) -> Any:
         """An ``Action`` for the transfer queue that sends ``paths`` to ``target``.
 
         Retries and resumes after a pause continue the same session, so the
@@ -130,6 +132,8 @@ class LanService:
                 on_file=on_file,
                 resume_session=session["id"] if resume else "",
                 on_session=lambda value: session.update(id=value),
+                message=message,
+                burn_after=burn_after,
             )
             return result.results
 

@@ -71,6 +71,7 @@ class NearbyView:
                 headline(
                     "Рядом",
                     ft.IconButton(ft.Icons.QR_CODE_2, tooltip="QR-код этого устройства", on_click=lambda e: self.show_qr()),
+                    ft.IconButton(ft.Icons.CASINO_OUTLINED, tooltip="Рулетка: файлы случайному устройству рядом", on_click=self._roulette),
                     ft.FilledTonalButton("По адресу", icon=ft.Icons.LINK, on_click=lambda e: self.ask_address()),
                 ),
                 ft.Column(
@@ -171,6 +172,10 @@ class NearbyView:
                     items=[
                         ft.PopupMenuItem(content="Файлы…", icon=ft.Icons.DESCRIPTION_OUTLINED, on_click=lambda e, p=peer: self._pick_files(p)),
                         ft.PopupMenuItem(content="Папку…", icon=ft.Icons.FOLDER_OUTLINED, on_click=lambda e, p=peer: self._pick_folder(p)),
+                        ft.PopupMenuItem(content="Записка или мем…", icon=ft.Icons.MAIL_OUTLINE, on_click=lambda e, p=peer: self._note(p)),
+                        ft.PopupMenuItem(
+                            content="С самоуничтожением…", icon=ft.Icons.TIMER_OUTLINED, on_click=lambda e, p=peer: self._bomb(p)
+                        ),
                         *(
                             [
                                 ft.PopupMenuItem(
@@ -213,24 +218,123 @@ class NearbyView:
         if path:
             self.send(target, [Path(path)])
 
-    def send(self, target: Peer | PeerLink, paths: list[Path], pin: str = "") -> None:
+    def send(
+        self, target: Peer | PeerLink, paths: list[Path], pin: str = "", message: str = "", burn_after: float | None = None
+    ) -> None:
         if self.app.lan is None:
             self.app.notify("Включите «Принимать файлы и быть видимым», чтобы отправлять", error=True)
             return
-        name = paths[0].name if len(paths) == 1 else f"{paths[0].name} и ещё {len(paths) - 1}"
+        if not paths:
+            name = "✉ Записка"
+        else:
+            name = paths[0].name if len(paths) == 1 else f"{paths[0].name} и ещё {len(paths) - 1}"
+            name = ("💣 " if burn_after else "") + name
         host = target.address if isinstance(target, Peer) else target.host
         self.app.queue.add(
             TransferJob(
                 name=name,
-                source=str(paths[0].parent),
+                source=str(paths[0].parent) if paths else "записка",
                 destination=f"📱 {_name(target)}",
                 source_url="",
                 destination_url=f"fta://{host}:{target.port}",
-                action=self.app.lan.sender(target, paths, pin=pin),
+                action=self.app.lan.sender(target, paths, pin=pin, message=message, burn_after=burn_after),
                 max_retries=self.app.store.settings.retries,
             )
         )
         self.app.notify(f"Ждём, пока {_name(target)} примет файлы", action="Передачи", on_action=lambda e: self.app.go(1))
+
+    # --- fun: notes, the timer bomb, the roulette ----------------------------------------
+
+    def _note(self, target: Peer | PeerLink) -> None:
+        from fta.fun import random_meme
+
+        text = ft.TextField(label="Записка", multiline=True, min_lines=2, max_lines=6, max_length=2000, autofocus=True)
+
+        def meme(_: ft.Event[ft.Control]) -> None:
+            text.value = random_meme()
+            safe_update(text)
+
+        def go(_: ft.Event[ft.Control]) -> None:
+            if not (text.value or "").strip():
+                return
+            self.app.page.pop_dialog()
+            self.send(target, [], message=text.value.strip())
+
+        self.app.page.show_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.MAIL_OUTLINE),
+                title=ft.Text(f"Мем-почта: {_name(target)}"),
+                content=ft.Column([text], tight=True, width=420),
+                actions=[
+                    ft.TextButton("Случайный мем", icon=ft.Icons.SHUFFLE, on_click=meme),
+                    ft.TextButton("Отмена", on_click=lambda e: self.app.page.pop_dialog()),
+                    ft.FilledButton("Отправить", icon=ft.Icons.SEND, on_click=go),
+                ],
+            )
+        )
+
+    def _bomb(self, target: Peer | PeerLink) -> None:
+        minutes = ft.SegmentedButton(
+            segments=[ft.Segment(value=str(m), label=ft.Text(label)) for m, label in ((5, "5 мин"), (30, "30 мин"), (60, "1 час"), (1440, "1 день"))],
+            selected=["30"],
+        )
+
+        async def go(_: ft.Event[ft.Control]) -> None:
+            seconds = int(minutes.selected[0]) * 60
+            self.app.page.pop_dialog()
+            files = await self.app.picker.pick_files(dialog_title="Файлы с самоуничтожением", allow_multiple=True)
+            paths = [Path(f.path) for f in files or [] if f.path]
+            if paths:
+                self.send(target, paths, message=f"💣 Исчезнет через {minutes.selected[0]} мин после получения", burn_after=seconds)
+
+        self.app.page.show_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.TIMER_OUTLINED),
+                title=ft.Text("Таймер-бомба"),
+                content=ft.Column(
+                    [
+                        ft.Text(f"Файлы удалятся у {_name(target)} через выбранное время после получения. Получатель увидит это до того, как примет."),
+                        minutes,
+                    ],
+                    tight=True,
+                    spacing=12,
+                    width=440,
+                ),
+                actions=[
+                    ft.TextButton("Отмена", on_click=lambda e: self.app.page.pop_dialog()),
+                    ft.FilledButton("Выбрать файлы", icon=ft.Icons.ATTACH_FILE, on_click=go),
+                ],
+            )
+        )
+
+    async def _roulette(self, e: ft.Event[ft.Control]) -> None:
+        import random
+
+        peers = self.app.lan.peers if self.app.lan else []
+        if not peers:
+            self.app.notify("Рядом никого — рулетке некого выбрать", error=True)
+            return
+        files = await self.app.picker.pick_files(dialog_title="Рулетка: что отправить", allow_multiple=True)
+        paths = [Path(f.path) for f in files or [] if f.path]
+        if not paths:
+            return
+        winner = random.choice(peers)
+
+        def go(_: ft.Event[ft.Control]) -> None:
+            self.app.page.pop_dialog()
+            self.send(winner, paths, message="🎲 Тебе выпало в рулетку!")
+
+        self.app.page.show_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.CASINO),
+                title=ft.Text(f"Выпало: {winner.name}"),
+                content=ft.Text(f"Отправить {len(paths)} файл(ов) на {winner.describe()}? Получатель всё равно подтвердит приём."),
+                actions=[
+                    ft.TextButton("Не надо", on_click=lambda e: self.app.page.pop_dialog()),
+                    ft.FilledButton("Крутим!", icon=ft.Icons.CASINO, on_click=go),
+                ],
+            )
+        )
 
     def ask_address(self) -> None:
         field = ft.TextField(
@@ -336,6 +440,17 @@ class NearbyView:
                 content=ft.Column(
                     [
                         ft.Text(offer_text(offer)),
+                        *([ft.Text(f"«{offer.message}»", italic=True)] if offer.message else []),
+                        *(
+                            [
+                                ft.Text(
+                                    f"💣 Файлы удалятся сами через {int(offer.burn_after // 60)} мин после получения",
+                                    color=ft.Colors.ERROR,
+                                )
+                            ]
+                            if offer.burn_after
+                            else []
+                        ),
                         ft.Text(
                             f"С адреса {offer.address}. Сохранятся в {self.app.lan.receiver.directory if self.app.lan else ''}",
                             theme_style=ft.TextThemeStyle.BODY_SMALL,
@@ -379,7 +494,7 @@ class NearbyView:
             self.incoming_title.visible = True
         total = offer.total_size
         progress = f" · {offer.received * 100 // total}%" if total and offer.state == "accepted" else ""
-        row.title.value = f"{offer.sender_name}: {offer.summary()}"
+        row.title.value = f"{offer.sender_name}: {offer.summary()}" if offer.files else f"✉ {offer.sender_name}: {offer.message}"
         row.subtitle.value = f"{_STATES.get(offer.state, offer.state)}{progress} · {human_size(offer.received)} из {human_size(total)}"
         row.trailing.visible = offer.state == "accepted"
         safe_update(self.incoming_title, self.incoming)

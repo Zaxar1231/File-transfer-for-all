@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fta"
-version = "0.7.0"
+version = "0.8.0"
 description = "File Transfer for All: a Material You app for moving files over SFTP, FTP, WebDAV, S3 and HTTP"
 readme = "README.md"
 license = { text = "MIT" }

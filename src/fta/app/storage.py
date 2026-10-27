@@ -172,6 +172,10 @@ class Settings:
     """When set, senders must type this PIN before their offer is shown."""
     speed_limit_kib: int = 0
     """All transfers together stay under this many KiB/s; 0 means no limit."""
+    fun_messages: bool = True
+    """«Вжух!» when a transfer finishes."""
+    sysadmin: bool = False
+    """Sysadmin mode: raw bytes, attempts, full SHA-256 and URLs on every transfer (also: Konami code)."""
 
 
 PORTABLE_DIR_NAME = "fta-data"

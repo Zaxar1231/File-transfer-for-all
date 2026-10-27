@@ -48,7 +48,15 @@ class _ProgressLine:
         if now - self._shown < 0.1 and done != total:
             return  # redraw ten times a second at most
         self._shown = now
-        text = f"{self.label}: {done * 100 // total}% ({done}/{total} bytes)" if total else f"{self.label}: {done} bytes"
+        if sys.stderr.isatty():  # a hedgehog runs along the line; logs and pipes get plain numbers
+            from fta.fun import hedgehog_bar
+
+            emoji = (sys.stderr.encoding or "").lower().startswith("utf")
+            text = f"{self.label[-30:]:30} {hedgehog_bar(done, total, 24, emoji)}"
+        elif total:
+            text = f"{self.label}: {done * 100 // total}% ({done}/{total} bytes)"
+        else:
+            text = f"{self.label}: {done} bytes"
         sys.stderr.write(f"\r{text}")
         sys.stderr.flush()
         self._open = True
@@ -407,6 +415,25 @@ def _sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stats(args: argparse.Namespace) -> int:
+    from fta.fun import human, statistics, summary_card_svg
+
+    since = time.time() - args.days * 86400 if args.days else None
+    stats = statistics(_journal().entries(), since=since)
+    period = f"за {args.days} дн." if args.days else "за всё время"
+    print(f"Files {stats.files}, {human(stats.bytes)} ({period}); failed {stats.failed}, verified {stats.verified}")
+    print(f"Average {human(stats.average_speed)}/s; saved by resume and delta {human(stats.saved_by_resume)}")
+    if stats.biggest[1]:
+        print(f"Biggest: {human(stats.biggest[0])} {stats.biggest[1]}")
+    if stats.fastest[1]:
+        print(f"Fastest: {human(stats.fastest[0])}/s {stats.fastest[1]}")
+    print("Most used: " + (", ".join(f"{n} {c}" for n, c in stats.by_protocol.most_common(5)) or "-"))
+    if args.card:
+        Path(args.card).write_text(summary_card_svg(stats, "Мои передачи", period), encoding="utf-8")
+        print(f"Summary card: {args.card}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -469,6 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
     share.add_argument("--ttl", default="1h", help="how long the link works: 10m, 1h, 1d (default 1h)")
     share.add_argument("--many", action="store_true", help="allow more than one download until it expires")
     share.add_argument("--port", type=int, default=0, help="port (default: any free one)")
+
+    stats = commands.add_parser("stats", help="totals from the journal; --card writes a shareable SVG")
+    stats.add_argument("--days", type=int, default=0, help="only the last N days")
+    stats.add_argument("--card", metavar="FILE.svg", help="write a summary card picture")
+    commands.add_parser("ёж", aliases=["hedgehog"], help="a hedgehog")
 
     peers = commands.add_parser("peers", help="list FTA devices on the local network")
     peers.add_argument("--wait", type=float, default=3, help="seconds to listen (default 3)")
@@ -552,6 +584,12 @@ def _run(args: argparse.Namespace) -> int:
             print(age.Identity.parse(_my_age_key()).recipient)
         elif args.command == "share":
             return _share(args)
+        elif args.command == "stats":
+            return _stats(args)
+        elif args.command in ("ёж", "hedgehog"):
+            from fta.fun import HEDGEHOG, random_meme
+
+            print(HEDGEHOG.rstrip() + "\n  " + random_meme())
         elif args.command == "history":
             journal = _journal()
             if args.csv:

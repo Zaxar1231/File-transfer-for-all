@@ -41,6 +41,9 @@ from fta.core.manager import FileResult
 from fta.core.throttle import Metered
 from fta.lan.identity import Identity, certificate_fingerprint
 from fta.lan.links import DEFAULT_PORT
+from fta.lan.burn import MAX_SECONDS as MAX_BURN
+from fta.lan.burn import MIN_SECONDS as MIN_BURN
+from fta.lan.burn import Burner
 from fta.lan.shares import Share, ShareRegistry
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,7 @@ logger = logging.getLogger(__name__)
 PART_SUFFIX = ".fta-part"
 _CHUNK = 256 * 1024
 MAX_FILES = 100_000
+MAX_MESSAGE = 2000
 
 
 class Declined(AccessDenied):
@@ -97,6 +101,10 @@ class Offer:
     """Bytes written so far, across all files."""
     destinations: dict[int, Path] = field(default_factory=dict)
     finished_at: float | None = None
+    message: str = ""
+    """A note from the sender («мем-почта»); an offer may carry only a note and no files."""
+    burn_after: float | None = None
+    """Timer bomb: seconds after arrival when the received files delete themselves."""
 
     @property
     def total_size(self) -> int:
@@ -162,6 +170,7 @@ class Receiver:
         self.port = port
         self.offers: dict[str, Offer] = {}
         self.shares = ShareRegistry()
+        self.burner = Burner(identity.cert_file.parent / "burn.json")
         """Links that give a file away (``/s/<token>``), served by this same HTTPS server."""
         self._lock = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
@@ -218,8 +227,15 @@ class Receiver:
             return 400, {"error": "an offer is a JSON object"}
         sender = body.get("sender") if isinstance(body.get("sender"), dict) else {}
         raw_files = body.get("files")
-        if not isinstance(raw_files, list) or not raw_files or len(raw_files) > MAX_FILES:
+        message = body.get("message") if isinstance(body.get("message"), str) else ""
+        if len(message) > MAX_MESSAGE:
+            return 400, {"error": "the note is too long"}
+        if not isinstance(raw_files, list) or len(raw_files) > MAX_FILES or not (raw_files or message.strip()):
             return 400, {"error": "no files"}
+        burn_after = body.get("burn_after")
+        if burn_after is not None:
+            if not isinstance(burn_after, (int, float)) or isinstance(burn_after, bool) or not MIN_BURN <= burn_after <= MAX_BURN:
+                return 400, {"error": "bad self-destruct time"}
         try:
             files = [FileOffer.from_json(item) for item in raw_files]
             for item in files:
@@ -231,7 +247,21 @@ class Receiver:
         if self.pin and not secrets.compare_digest(str(body.get("pin") or ""), self.pin):
             logger.info("offer from %s refused: wrong PIN", address)
             return 403, {"error": "pin"}
-        offer = Offer(str(sender.get("name") or "?")[:80], str(sender.get("id") or "")[:64], files, address)
+        offer = Offer(
+            str(sender.get("name") or "?")[:80],
+            str(sender.get("id") or "")[:64],
+            files,
+            address,
+            message=message.strip(),
+            burn_after=float(burn_after) if burn_after is not None and files else None,
+        )
+        if not files:  # just a note: nothing lands on disk, so nothing to accept
+            offer.state = "done"
+            offer.finished_at = time.time()
+            with self._lock:
+                self.offers[offer.session] = offer
+            self.on_update(offer)
+            return 200, {"session": offer.session, "delivered": True}
         earlier = self.offers.get(str(body.get("resume") or ""))
         if earlier is not None and earlier.state == "accepted" and _same_files(earlier.files, files):
             # The sender holds the secret session id of an offer the user already accepted:
@@ -328,6 +358,9 @@ class Receiver:
                 _apply_metadata(offer.destinations[index], item)
         offer.state = "done"
         offer.finished_at = time.time()
+        if offer.burn_after and self.burner is not None:
+            tops = {offer.destinations[index].relative_to(self.directory).parts[0] for index in offer.destinations}
+            self.burner.schedule([self.directory / top for top in sorted(tops)], offer.burn_after)
         self.on_update(offer)
         return {"files": offer.file_count, "bytes": offer.received}
 
@@ -570,6 +603,8 @@ def send_files(
     on_file: Callable[[str], None] | None = None,
     resume_session: str = "",
     on_session: Callable[[str], None] | None = None,
+    message: str = "",
+    burn_after: float | None = None,
     decision_timeout: float = 300.0,
     timeout: float = 30.0,
 ) -> SendResult:
@@ -593,7 +628,14 @@ def send_files(
             "POST",
             "/api/offer",
             json.dumps(
-                {"sender": me, "files": [item.to_json() for item, _ in items], "pin": pin, "resume": resume_session}
+                {
+                    "sender": me,
+                    "files": [item.to_json() for item, _ in items],
+                    "pin": pin,
+                    "resume": resume_session,
+                    "message": message,
+                    "burn_after": burn_after,
+                }
             ).encode(),
             {"Content-Type": "application/json"},
         )
@@ -603,6 +645,8 @@ def send_files(
         if status != 200:
             raise TransferError(f"offer refused: {reply.get('error', status)}")
         session = reply["session"]
+        if reply.get("delivered"):  # a note alone: nothing more to send
+            return SendResult(0, 0, conn.seen, [])
         if on_session:
             on_session(session)
         done = 0

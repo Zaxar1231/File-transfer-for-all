@@ -85,6 +85,14 @@ class SettingsView:
         self._build_server_controls()
         self._build_lan_controls()
         self._build_security_controls()
+        self.fun_switch = ft.Switch(
+            label="Весёлые сообщения «Вжух!» после передачи", value=settings.fun_messages, on_change=self._on_fun
+        )
+        self.sysadmin_switch = ft.Switch(
+            label="Режим «Сисадмин»: байты, попытки, полный SHA-256 и адреса у каждой передачи",
+            value=settings.sysadmin,
+            on_change=lambda e: self.app.set_sysadmin(bool(e.control.value)),
+        )
 
         self.view = ft.Column(
             [
@@ -154,6 +162,16 @@ class SettingsView:
                             ),
                             self.totp_switch,
                             self.totp_status,
+                        ),
+                        _section(
+                            "Фишки",
+                            self.fun_switch,
+                            self.sysadmin_switch,
+                            ft.Text(
+                                "Подсказка: режим «Сисадмин» включается и кодом ↑↑↓↓←→←→BA.",
+                                theme_style=ft.TextThemeStyle.BODY_SMALL,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
                         ),
                         _section(
                             "Обновления",
@@ -455,6 +473,10 @@ class SettingsView:
         self.app.store.settings.speed_limit_kib = int(e.control.selected[0])
         self.app.store.save()
         self.app.apply_speed_limit()
+
+    def _on_fun(self, e: ft.Event[ft.Switch]) -> None:
+        self.app.store.settings.fun_messages = bool(e.control.value)
+        self.app.store.save()
 
     def _on_verify(self, e: ft.Event[ft.Switch]) -> None:
         self.app.store.settings.verify = bool(e.control.value)

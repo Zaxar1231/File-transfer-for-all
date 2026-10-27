@@ -32,10 +32,15 @@ HELP = f"""File Transfer for All {__version__}: transfer shell
   cancel <id>                cancel a transfer
   peers                      devices found on the local network
   history [n]                last transfers from the journal (default 10)
+  stats                      totals from the journal
+  ёж, вжух                   for when the copy takes a while
   help, exit
 
   Files can also be copied with SFTP: psftp, WinSCP, FileZilla, sftp.
 """
+
+
+ALIASES = {"ёж": "hedgehog", "ежик": "hedgehog", "ёжик": "hedgehog", "вжух": "vzhuh", "статистика": "stats"}
 
 
 @dataclass
@@ -70,6 +75,7 @@ class Shell:
         if not words:
             return ""
         command, args = words[0].lower(), words[1:]
+        command = ALIASES.get(command, command)
         handler = getattr(self, f"cmd_{command}", None)
         if handler is None:
             return f"unknown command: {command} (type help)\n"
@@ -192,6 +198,29 @@ class Shell:
     def cmd_peers(self, args: list[str]) -> str:
         peers = self.context.peers()
         return "".join(f"{peer}\n" for peer in peers) if peers else "no devices found on the local network\n"
+
+    def cmd_hedgehog(self, args: list[str]) -> str:
+        from fta.fun import HEDGEHOG
+
+        return HEDGEHOG.lstrip("\n") + "  Ёжик проверил очередь: " + f"{len(self.context.queue.jobs)} передач(и)\n"
+
+    def cmd_vzhuh(self, args: list[str]) -> str:
+        from fta.fun import random_meme
+
+        return f"✨ Вжух! {random_meme()}\n"
+
+    def cmd_stats(self, args: list[str]) -> str:
+        from fta.fun import human, statistics
+
+        if self.context.journal is None:
+            return "the journal is off\n"
+        stats = statistics(self.context.journal.entries())
+        top = ", ".join(f"{name} {count}" for name, count in stats.by_protocol.most_common(3)) or "-"
+        return (
+            f"files {stats.files}, {human(stats.bytes)}, failed {stats.failed}, verified {stats.verified}\n"
+            f"average {human(stats.average_speed)}/s, saved by resume {human(stats.saved_by_resume)}\n"
+            f"most used: {top}\n"
+        )
 
     def cmd_history(self, args: list[str]) -> str:
         if self.context.journal is None:
