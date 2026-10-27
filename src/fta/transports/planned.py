@@ -26,24 +26,6 @@ class _Planned(Transport):
 
 
 @register
-class SftpTransport(_Planned):
-    schemes = ("sftp",)
-    backend_hint = "paramiko"
-
-
-@register
-class WebDavTransport(_Planned):
-    schemes = ("dav", "davs")
-    backend_hint = "plain HTTP methods PROPFIND/MKCOL on top of the http transport"
-
-
-@register
 class SmbTransport(_Planned):
     schemes = ("smb",)
     backend_hint = "smbprotocol"
-
-
-@register
-class S3Transport(_Planned):
-    schemes = ("s3",)
-    backend_hint = "boto3"
