@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -29,4 +30,4 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Test
-        run: pytest -q
+        run: pytest -v --durations=10
