@@ -116,6 +116,8 @@ class FtpTransport(Transport):
 
     def _size(self, remote: str) -> int | None:
         try:
+            # Many servers refuse SIZE in ASCII mode, which ftplib starts in.
+            self._session.voidcmd("TYPE I")
             return self._session.size(remote)
         except ftplib.error_perm:
             return None

@@ -34,7 +34,7 @@ class S3Transport(Transport):
             import boto3
             from botocore.exceptions import BotoCoreError, ClientError
         except ImportError:
-            raise TransferError('s3:// needs boto3: pip install "fta[s3]"') from None
+            raise TransferError("s3:// needs boto3: pip install boto3") from None
         if not self.endpoint.host:
             raise TransferError("s3 URLs need a bucket: s3://bucket/key")
         self.library_errors = (BotoCoreError, ClientError)

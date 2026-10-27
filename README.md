@@ -1,189 +1,145 @@
-# fta — File Transfer for All
+# File Transfer for All
 
 [![CI](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml/badge.svg)](https://github.com/Zaxar1231/File-transfer-for-all/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-Универсальный инструмент для передачи файлов: один API и одна команда для всех протоколов.
-Ядро ничего не знает о конкретных протоколах. Каждый протокол — это отдельный плагин
-(класс `Transport`), который регистрируется под одной или несколькими URL-схемами.
+Приложение для передачи файлов в стиле **Material You (Material Design 3)**. Работает с
+SFTP, FTP/FTPS, WebDAV, Amazon S3 и S3-совместимыми хранилищами, HTTP(S) и файлами на
+самом устройстве. Собирается под Windows, macOS, Linux, Android и iOS.
 
-Сейчас работают локальная ФС, HTTP(S), WebDAV, FTP(S), SFTP и S3. Файлы и целые
-директории копируются между любой парой протоколов.
+![Файлы: две панели, слева устройство, справа FTP-сервер](docs/screenshots/files.png)
 
-## Установка
+| Передачи | Подключения | Телефон, тёмная тема |
+|---|---|---|
+| ![Очередь передач с прогрессом](docs/screenshots/transfers.png) | ![Сохранённые подключения](docs/screenshots/connections.png) | ![Телефонная раскладка в тёмной теме](docs/screenshots/phone-dark.png) |
+
+## Возможности
+
+- **Две панели, как в файловом менеджере.** Каждая показывает это устройство или любое
+  сохранённое подключение. Файлы и папки копируются между панелями в обе стороны, в том
+  числе напрямую сервер → сервер (например, FTP → S3).
+- **Очередь передач.** Прогресс, скорость, отмена, повтор после ошибки, несколько передач
+  одновременно. Бейдж на вкладке показывает, сколько передач идёт сейчас.
+- **Подключения.** Форма подстраивается под протокол. Кнопка «Проверить» соединяется с
+  сервером до сохранения. Пароль сохраняется только с галочкой «Запомнить», иначе
+  приложение спросит его один раз за сеанс.
+- **Работа с файлами.** Создание папок, удаление (папки — вместе с содержимым), скрытые
+  файлы по желанию, выбор папки системным диалогом.
+- **Material You.** Вся палитра строится из выбранного цвета акцента, есть светлая, тёмная
+  и системная темы. На широком экране навигация слева (navigation rail с FAB), на телефоне
+  внизу (navigation bar) и панели переключаются по одной.
+
+## Запуск
 
 ```bash
-pip install -e .            # ядро: локальная ФС, HTTP, WebDAV, FTP — без зависимостей
-pip install -e ".[sftp]"    # + SFTP (paramiko)
-pip install -e ".[s3]"      # + S3 (boto3)
-pip install -e ".[all]"     # всё сразу
+python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -e .
+fta-app                                          # или: python -m fta.app
 ```
 
-## Использование
+При первом запуске Flet сам скачает свой десктопный клиент.
+
+Настройки и подключения хранятся в `~/.config/fta/config.json` (Windows:
+`%APPDATA%\fta`, macOS: `~/Library/Application Support/fta`, в собранном приложении —
+в его каталоге данных). Файл доступен только текущему пользователю. Сохранённые пароли
+лежат в нём открытым текстом, поэтому «Запомнить пароль» выключено по умолчанию.
+
+## Сборка приложения
+
+Сборкой занимается [Flet](https://flet.dev): Python-приложение упаковывается во Flutter.
+Flutter SDK `flet build` скачивает сам при первой сборке.
 
 ```bash
-fta schemes                                              # какие протоколы доступны
+pip install "flet[cli]==1.0.5"
+flet build linux       # или: windows, macos, apk, aab, ipa
+```
 
-fta cp ./report.pdf https://example.com/upload/report.pdf
-fta cp ftp://user@ftp.example.com/pub/data.zip ./ --src-opt password=secret
-fta cp -r ./photos sftp://me@nas.local/backup/ --dst-opt key_file=~/.ssh/id_ed25519
-fta cp -r sftp://me@nas.local/backup/photos s3://my-bucket/archive/   # протокол → протокол
-fta cp ./notes.md davs://cloud.example.com/remote.php/dav/files/me/ --dst-opt username=me
+Готовая сборка появится в `build/<платформа>`. Настройки сборки (название, идентификатор,
+путь к коду) лежат в `[tool.flet]` в `pyproject.toml`, иконка — в `src/assets/icon.png`.
+Windows, macOS и iOS собираются на своей ОС; требования к каждой платформе описаны в
+[документации Flet](https://flet.dev/docs/publish).
 
+## Протоколы
+
+| Протокол | Схема | Что умеет |
+|---|---|---|
+| Это устройство | путь, `file://` | всё |
+| SFTP | `sftp` | всё; ключ хоста проверяется по `~/.ssh/known_hosts` |
+| FTP / FTPS | `ftp`, `ftps` | всё; листинг требует MLSD (RFC 3659) |
+| WebDAV | `dav`, `davs` | всё; стандартный WebDAV (RFC 4918) |
+| Amazon S3 и совместимые | `s3` | всё; папки — это префиксы ключей |
+| HTTP / HTTPS | `http`, `https` | скачивание, загрузка через PUT, без листинга |
+| SMB | `smb` | пока не реализован |
+
+## Командная строка
+
+То же ядро доступно без интерфейса, например для скриптов:
+
+```bash
+fta cp -r ./photos sftp://me@nas.local/backup/ --dst-opt password=secret
+fta cp ftp://user@host/pub/data.zip ./ --src-opt password=secret
 fta ls s3://my-bucket/archive
 fta stat dav://localhost:8080/docs/a.txt
 fta mkdir -p ftp://user@host/new/dir --opt password=secret
 fta rm sftp://me@nas.local/tmp/old.log
+fta schemes
 ```
-
-Правила копирования:
-
-- Если назначение — существующая директория или путь заканчивается на `/`, источник
-  кладётся внутрь под своим именем.
-- `-r` копирует директорию целиком. Без `-r` копируется один файл.
-- Передача между двумя удалёнными протоколами идёт через временный файл на локальном диске.
-
-Опции передаются как `KEY=VALUE`: `--src-opt` для источника, `--dst-opt` для назначения,
-`--opt` для `ls`/`stat`/`mkdir`/`rm`. Пароль в URL (`ftp://user:pass@host`) тоже работает,
-но попадает в историю shell, поэтому лучше `--opt password=...`.
-
-### Из Python
-
-```python
-from fta import copy, open_transport
-
-copy("./photos", "sftp://me@nas.local/backup/", recursive=True,
-     destination_options={"key_file": "/home/me/.ssh/id_ed25519"})
-
-with open_transport("s3://my-bucket", region="eu-central-1") as s3:
-    for entry in s3.listdir("/archive"):
-        print(entry.name, entry.size)
-```
-
-## Протоколы
-
-| Протокол | Схемы | Операции | Библиотека | Опции |
-|---|---|---|---|---|
-| Локальная ФС | путь, `file://` | все | stdlib | — |
-| HTTP / HTTPS | `http`, `https` | download (GET), upload (PUT), stat (HEAD), delete | stdlib | `username`, `password`, `timeout` |
-| WebDAV | `dav`, `davs` (= http/https) | все | stdlib | `username`, `password`, `timeout` |
-| FTP / FTPS | `ftp`, `ftps` (explicit TLS) | все; list/stat требуют MLSD/MLST | stdlib | `username`, `password`, `timeout` |
-| SFTP | `sftp` | все | paramiko | `username`, `password`, `key_file`, `known_hosts`, `accept_unknown_host`, `timeout` |
-| S3 и совместимые (MinIO, R2, Ceph) | `s3://bucket/key` | все; `mkdir` ничего не делает | boto3 | `endpoint_url`, `region`, `profile`, `access_key`, `secret_key` |
-| SMB / CIFS | `smb` | заглушка | smbprotocol (план) | — |
-
-Особенности:
-
-- **SFTP** проверяет ключ хоста по `~/.ssh/known_hosts`. Неизвестный хост отклоняется,
-  пока не указано `accept_unknown_host=true`.
-- **S3** берёт учётные данные из стандартной цепочки AWS (переменные окружения, `~/.aws`,
-  роль инстанса), если они не заданы опциями. Директорий в S3 нет, поэтому пустые
-  директории не копируются.
-- **HTTP** не умеет листинг директорий; для этого есть WebDAV.
-
-Дальше в планах: SMB, SCP, NFS, rsync, облачные диски с OAuth (Google Drive, Dropbox,
-OneDrive), GCS, Azure Blob, BitTorrent и magnet-ссылки, IPFS, Bluetooth OBEX,
-Wi-Fi Direct, QUIC/HTTP3, WebRTC, Magic Wormhole. Каждый — отдельный модуль в `transports/`.
 
 ## Архитектура
 
 ```
-src/fta/
-├── cli.py                 # fta cp / ls / stat / mkdir / rm / schemes
-├── core/
-│   ├── endpoint.py        # разбор "путь или URL" → Endpoint
-│   ├── transport.py       # абстрактный Transport, RemoteEntry, Progress, translate_errors
-│   ├── registry.py        # схема → класс транспорта; загрузка плагинов
-│   ├── manager.py         # copy(): файлы и деревья, маршрутизация, staging
-│   └── errors.py          # TransferError, NotFound, UnsupportedScheme, UnsupportedOperation
-└── transports/
-    ├── local.py           # "", file
-    ├── http.py            # http, https
-    ├── webdav.py          # dav, davs
-    ├── ftp.py             # ftp, ftps
-    ├── sftp.py            # sftp
-    ├── s3.py              # s3
-    └── planned.py         # smb — заглушка
+src/
+├── main.py                  # точка входа для flet build
+├── assets/icon.png
+└── fta/
+    ├── app/                 # приложение (Flet, Material 3)
+    │   ├── main.py          #   оболочка: тема, адаптивная навигация, диалоги
+    │   ├── storage.py       #   подключения и настройки (JSON)
+    │   ├── transfers.py     #   очередь передач на фоновых потоках
+    │   ├── ui.py            #   общие элементы и форматирование
+    │   └── views/           #   экраны: browser, transfers, connections, settings
+    ├── core/                # ядро, не зависит от интерфейса
+    │   ├── transport.py     #   интерфейс Transport, прогресс, ошибки библиотек
+    │   ├── registry.py      #   схема URL → транспорт, плагины
+    │   ├── manager.py       #   copy(): файлы и папки между любыми двумя транспортами
+    │   └── endpoint.py, errors.py
+    ├── transports/          # local, http, webdav, ftp, sftp, s3, planned (smb)
+    └── cli.py               # fta cp / ls / stat / mkdir / rm
 ```
 
-Ключевые решения:
-
-- **Протокол = класс.** Операции `upload`, `download`, `listdir`, `stat`, `mkdir`, `delete`
-  опциональны. Нереализованная операция бросает `UnsupportedOperation`.
-- **Локальная ФС — тоже транспорт.** Менеджер копирования работает с любыми двумя
-  транспортами одинаково.
-- **N×M через staging.** Протоколу достаточно уметь загрузку и скачивание. Передача между
-  двумя удалёнными протоколами идёт через временный локальный файл. Это дороже по диску,
-  но новый протокол сразу работает со всеми остальными.
-- **Единые ошибки.** Исключения библиотек (`ftplib`, paramiko, botocore) превращаются в
-  `TransferError`, отсутствие пути — в `NotFound`. CLI печатает их одной строкой.
-- **Плагины.** Транспорт регистрируется декоратором `@register` или через entry point
-  группы `fta.transports` в стороннем пакете. Ядро менять не нужно.
-- **Прогресс.** Везде один колбэк `(done, total)`. `Progress` потокобезопасен, потому что
-  boto3 передаёт части файла параллельно.
-- **Тяжёлые зависимости опциональны.** paramiko и boto3 импортируются только при
-  подключении, поэтому ядро ставится без них.
-
-## Как добавить протокол
-
-```python
-# src/fta/transports/myproto.py
-from fta.core.registry import register
-from fta.core.transport import Transport, translate_errors
-
-@register
-class MyTransport(Transport):
-    schemes = ("myproto",)
-    library_errors = (MyLibError,)      # станут TransferError
-
-    def connect(self):
-        ...                             # self.endpoint, self.username, self.password, self.options
-
-    def close(self):
-        ...
-
-    @translate_errors
-    def upload(self, local, remote, progress=None):
-        ...
-
-    @translate_errors
-    def download(self, remote, local, progress=None):
-        ...
-```
-
-Затем добавьте модуль в `BUILTIN_MODULES` в `core/registry.py` или опубликуйте пакет
-с entry point:
-
-```toml
-[project.entry-points."fta.transports"]
-myproto = "my_pkg.transport:MyTransport"
-```
-
-Для теста добавьте фикстуру с сервером в `tests/test_protocols.py` и вызовите
-`roundtrip_tree`: он загружает дерево, проверяет листинг и `stat`, скачивает обратно и
-удаляет файл.
-
-## Ограничения и планы
-
-- Нет повторных попыток, возобновления (resume) и параллельной передачи файлов.
-- Передача между двумя удалёнными протоколами требует места на локальном диске под
-  самый большой файл, а прогресс показывается дважды (скачивание, затем загрузка).
-- Протоколы вида «отправитель и получатель договариваются кодом» (Magic Wormhole,
-  обнаружение в LAN) не укладываются в модель «путь → путь». Для них понадобится
-  второй интерфейс, например `send(file)` / `receive(code)`.
+- **Ядро отделено от интерфейса.** Приложение и CLI используют одни и те же транспорты и
+  одну функцию `copy()`. Модель приложения (`storage.py`, `transfers.py`) тоже не зависит
+  от Flet и покрыта обычными тестами.
+- **Любой протокол с любым.** Транспорту достаточно уметь загрузку и скачивание: передача
+  сервер → сервер идёт через временный файл.
+- **Новый протокол** — это класс `Transport` с декоратором `@register` в `transports/`
+  или пакет с entry point `fta.transports`. Ни ядро, ни интерфейс менять не нужно: схема
+  появится в списке протоколов.
 
 ## Разработка
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
 
-`tests/test_protocols.py` поднимает настоящие серверы прямо в процессе: FTP (pyftpdlib),
-WebDAV и HTTP (WsgiDAV + cheroot), SFTP (asyncssh) и S3 (moto). Сеть не нужна.
-CI запускает тесты на Python 3.10–3.13.
+Тесты протоколов поднимают настоящие серверы прямо в процессе: FTP (pyftpdlib), WebDAV и
+HTTP (WsgiDAV + cheroot), SFTP (asyncssh) и S3 (moto). Сеть не нужна. CI запускает тесты на
+Python 3.10–3.13.
+
+Приложение можно открыть в браузере (удобно для отладки интерфейса):
+
+```bash
+python -c "import flet as ft; from fta.app.main import main; ft.run(main, view=ft.AppView.WEB_BROWSER)"
+```
+
+## Ограничения и планы
+
+- SMB, а также облачные диски с OAuth (Google Drive, Dropbox, OneDrive) пока не поддерживаются.
+- Нет докачки (resume) и автоматических повторов при обрыве; повторить можно вручную.
+- Передача сервер → сервер требует места на диске под самый большой файл.
+- На Android и iOS доступ к файлам устройства ограничен песочницей приложения.
 
 ## Лицензия
 

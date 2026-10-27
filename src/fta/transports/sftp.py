@@ -28,7 +28,7 @@ class SftpTransport(Transport):
         try:
             import paramiko
         except ImportError:
-            raise TransferError('sftp:// needs paramiko: pip install "fta[sftp]"') from None
+            raise TransferError("sftp:// needs paramiko: pip install paramiko") from None
         self.library_errors = (paramiko.SSHException,)
 
         client = paramiko.SSHClient()

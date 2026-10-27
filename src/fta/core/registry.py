@@ -6,6 +6,7 @@ transports through the ``fta.transports`` entry point group.
 
 from __future__ import annotations
 
+import threading
 from importlib import import_module, metadata
 from typing import Any
 
@@ -26,6 +27,7 @@ BUILTIN_MODULES = (
 
 _registry: dict[str, type[Transport]] = {}
 _loaded = False
+_load_lock = threading.Lock()
 
 
 def register(cls: type[Transport]) -> type[Transport]:
@@ -36,14 +38,18 @@ def register(cls: type[Transport]) -> type[Transport]:
 
 
 def _load_all() -> None:
+    """Import built-in and plugin transports once, even when several threads ask at the same time."""
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    for module in BUILTIN_MODULES:
-        import_module(module)
-    for entry_point in metadata.entry_points(group=ENTRY_POINT_GROUP):
-        register(entry_point.load())
+    with _load_lock:
+        if _loaded:
+            return
+        for module in BUILTIN_MODULES:
+            import_module(module)
+        for entry_point in metadata.entry_points(group=ENTRY_POINT_GROUP):
+            register(entry_point.load())
+        _loaded = True
 
 
 def transport_class(scheme: str) -> type[Transport]:

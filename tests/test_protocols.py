@@ -146,6 +146,22 @@ def test_ftp(ftp_url, tmp_path):
     roundtrip_tree(ftp_url, tmp_path, {"password": "secret"})
 
 
+def test_ftp_download_knows_the_total_size(ftp_url, tmp_path):
+    src = tmp_path / "sized.bin"
+    src.write_bytes(os.urandom(200_000))
+    copy(str(src), ftp_url + "/", destination_options={"password": "secret"})
+    totals = set()
+
+    copy(
+        ftp_url + "/sized.bin",
+        str(tmp_path / "back.bin"),
+        progress=lambda done, total: totals.add(total),
+        source_options={"password": "secret"},
+    )
+
+    assert totals == {200_000}
+
+
 def test_webdav(dav_port, tmp_path):
     roundtrip_tree(f"dav://127.0.0.1:{dav_port}", tmp_path, {})
 
