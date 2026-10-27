@@ -59,6 +59,15 @@ jobs:
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
 
+      - name: Newest Xcode
+        if: matrix.target == 'macos'
+        # Flutter plugins need the macOS 26 SDK; some runner images default to an older Xcode.
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          echo "Using $xcode"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
       - name: Install Flet CLI
         run: pip install "${{ env.FLET_CLI }}"
 
