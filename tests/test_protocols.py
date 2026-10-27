@@ -125,7 +125,12 @@ def sftp_url(tmp_path):
 
     server = asyncio.run_coroutine_threadsafe(start(), loop).result(10)
     yield f"sftp://user@127.0.0.1:{server.get_port()}"
-    server.close()
+
+    async def stop():  # asyncio objects must be closed from their own loop's thread
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run_coroutine_threadsafe(stop(), loop).result(10)
     loop.call_soon_threadsafe(loop.stop)
     thread.join(5)
 
