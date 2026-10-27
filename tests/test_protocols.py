@@ -7,8 +7,14 @@ Each protocol test is skipped when its server or client library is missing;
 from __future__ import annotations
 
 import asyncio
+import getpass
 import os
+import shutil
+import socket
+import subprocess
+import tempfile
 import threading
+import time
 
 import pytest
 
@@ -135,6 +141,88 @@ def sftp_url(tmp_path):
     thread.join(5)
 
 
+SAMBA_CONF = """[global]
+server role = standalone server
+smb ports = {port}
+interfaces = 127.0.0.1
+bind interfaces only = yes
+lock directory = {base}/lock
+state directory = {base}/state
+cache directory = {base}/cache
+private dir = {base}/private
+pid directory = {base}/pid
+ncalrpc dir = {base}/ncalrpc
+log file = {base}/log/log.%m
+passdb backend = tdbsam:{base}/private/passdb.tdb
+load printers = no
+printcap name = /dev/null
+disable spoolss = yes
+
+[public]
+path = {share}
+read only = no
+"""
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def smb_url():
+    """A real Samba server on a random port, run as root (directly or via passwordless sudo)."""
+    pytest.importorskip("smbclient")
+    smbd = shutil.which("smbd") or shutil.which("smbd", path="/usr/sbin")
+    smbpasswd = shutil.which("smbpasswd") or shutil.which("smbpasswd", path="/usr/bin:/usr/sbin")
+    if not smbd or not smbpasswd:
+        pytest.skip("Samba is not installed (apt-get install samba)")
+    sudo = [] if os.geteuid() == 0 else ["sudo", "-n"]
+    if sudo and subprocess.run([*sudo, "true"], capture_output=True).returncode != 0:
+        pytest.skip("smbd needs root or passwordless sudo")
+
+    # Samba keeps Unix sockets in these directories, so the path must stay short.
+    base = tempfile.mkdtemp(prefix="fta-smb-")
+    share = os.path.join(base, "share")
+    os.makedirs(share)
+    for name in ("lock", "state", "cache", "private", "pid", "log"):
+        os.makedirs(os.path.join(base, name))
+    port = _free_port()
+    conf = os.path.join(base, "smb.conf")
+    with open(conf, "w") as fp:
+        fp.write(SAMBA_CONF.format(port=port, base=base, share=share))
+    user = getpass.getuser()
+    subprocess.run(
+        [*sudo, smbpasswd, "-c", conf, "-a", "-s", user], input="secret\nsecret\n", text=True, check=True, capture_output=True
+    )
+    server = subprocess.Popen(
+        [*sudo, smbd, "--foreground", "--no-process-group", f"--configfile={conf}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        # smbd signals its whole process group on shutdown; keep pytest out of it
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            socket.create_connection(("127.0.0.1", port), 0.2).close()
+            break
+        except OSError:
+            if server.poll() is not None or time.monotonic() > deadline:
+                pytest.fail(f"smbd did not start (exit code {server.poll()})")
+            time.sleep(0.1)
+
+    yield f"smb://{user}@127.0.0.1:{port}/public"
+
+    server.terminate()
+    try:
+        server.wait(10)
+    except subprocess.TimeoutExpired:
+        server.kill()
+    subprocess.run([*sudo, "rm", "-rf", base], capture_output=True)
+
+
 @pytest.fixture
 def s3_url(monkeypatch):
     moto = pytest.importorskip("moto")
@@ -177,6 +265,21 @@ def test_sftp(sftp_url, tmp_path):
 
 def test_s3(s3_url, tmp_path):
     roundtrip_tree(s3_url, tmp_path, {})
+
+
+def test_smb(smb_url, tmp_path):
+    roundtrip_tree(smb_url, tmp_path, {"password": "secret"})
+
+
+def test_smb_reports_wrong_password_and_missing_share(smb_url):
+    from fta import TransferError
+
+    with pytest.raises(TransferError, match="cannot connect"):
+        with open_transport(smb_url, password="wrong"):
+            pass
+    with open_transport(smb_url, password="secret") as transport:
+        with pytest.raises(TransferError, match="need a share"):
+            transport.listdir("/")
 
 
 def test_http_put_head_get_delete(dav_port, tmp_path):
