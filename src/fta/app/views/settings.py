@@ -74,6 +74,7 @@ class SettingsView:
         )
         self._render_swatches()
         self._build_server_controls()
+        self._build_lan_controls()
 
         self.view = ft.Column(
             [
@@ -95,6 +96,19 @@ class SettingsView:
                             ft.Text("Повторов при ошибке (каждый продолжает с места обрыва)"),
                             self.retries,
                             self.verify,
+                        ),
+                        _section(
+                            "Устройства рядом",
+                            ft.Text(
+                                "Как это устройство видят другие на вкладке «Рядом», куда сохранять полученное "
+                                "и нужен ли PIN. Каждую входящую передачу вы подтверждаете сами.",
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Row([self.device_name, self.lan_pin], wrap=True, spacing=12),
+                            ft.Row(
+                                [self.receive_dir_text, ft.IconButton(ft.Icons.FOLDER_OPEN_OUTLINED, tooltip="Выбрать папку", on_click=self._pick_receive_dir)],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
                         ),
                         _section(
                             "SSH-сервер (PuTTY, WinSCP, psftp)",
@@ -159,6 +173,50 @@ class SettingsView:
             expand=True,
             spacing=16,
         )
+
+    # --- local network -------------------------------------------------------------------
+
+    def _build_lan_controls(self) -> None:
+        settings = self.app.store.settings
+        self.device_name = ft.TextField(
+            label="Имя устройства",
+            value=settings.device_name,
+            hint_text="по умолчанию — имя компьютера",
+            width=260,
+            max_length=40,
+            on_blur=self._on_lan_field,
+            on_submit=self._on_lan_field,
+        )
+        self.lan_pin = ft.TextField(
+            label="PIN для отправителей",
+            value=settings.lan_pin,
+            hint_text="пусто — без PIN",
+            width=200,
+            password=True,
+            can_reveal_password=True,
+            input_filter=ft.NumbersOnlyInputFilter(),
+            max_length=8,
+            on_blur=self._on_lan_field,
+            on_submit=self._on_lan_field,
+        )
+        self.receive_dir_text = ft.Text(str(self.app.store.receive_dir), expand=True, selectable=True)
+
+    def _on_lan_field(self, e: ft.Event[ft.TextField]) -> None:
+        settings = self.app.store.settings
+        name, pin = (self.device_name.value or "").strip(), (self.lan_pin.value or "").strip()
+        if (name, pin) == (settings.device_name, settings.lan_pin):
+            return
+        settings.device_name, settings.lan_pin = name, pin
+        self.app.store.save()
+        self.app.apply_lan()
+
+    async def _pick_receive_dir(self, e: ft.Event[ft.IconButton]) -> None:
+        path = await self.app.picker.get_directory_path(dialog_title="Куда сохранять полученные файлы")
+        if path:
+            self.app.store.settings.receive_dir = path
+            self.receive_dir_text.value = path
+            self.app.store.save()
+            self.app.apply_lan()
 
     # --- SSH server ----------------------------------------------------------------------
 

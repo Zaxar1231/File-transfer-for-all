@@ -1,4 +1,4 @@
-"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | serve | history | schemes``."""
+"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | serve | send | receive | peers | history | schemes``."""
 
 from __future__ import annotations
 
@@ -37,12 +37,17 @@ class _ProgressLine:
     def __init__(self) -> None:
         self.label = ""
         self._open = False
+        self._shown = 0.0
 
     def start(self, path: str) -> None:
         self.finish()
         self.label = path
 
     def update(self, done: int, total: int | None) -> None:
+        now = time.monotonic()
+        if now - self._shown < 0.1 and done != total:
+            return  # redraw ten times a second at most
+        self._shown = now
         text = f"{self.label}: {done * 100 // total}% ({done}/{total} bytes)" if total else f"{self.label}: {done} bytes"
         sys.stderr.write(f"\r{text}")
         sys.stderr.flush()
@@ -159,6 +164,132 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _lan(store, on_offer=lambda offer: False, port: int = 0, pin: str = "", directory: str | None = None, on_update=None):
+    from fta.lan.service import LanService
+
+    receive_dir = Path(directory).expanduser().resolve() if directory else store.receive_dir
+    return LanService(
+        store.data_dir,
+        receive_dir,
+        on_offer,
+        name=store.settings.device_name,
+        port=port,
+        pin=pin,
+        on_update=on_update,
+    )
+
+
+def _wait_for_peers(service, seconds: float, wanted: str | None = None):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if wanted and service.find(wanted):
+            return service.find(wanted)
+        time.sleep(0.2)
+    return service.find(wanted) if wanted else None
+
+
+def _peers(args: argparse.Namespace) -> int:
+    from fta.app.storage import Store
+
+    service = _lan(Store())
+    service.start()
+    try:
+        _wait_for_peers(service, args.wait)
+        peers = service.peers
+        if not peers:
+            print("no devices found on the local network")
+        for peer in peers:
+            ssh = f"  ssh port {peer.ssh_port}" if peer.ssh_port else ""
+            print(f"{peer.name:24} {peer.address}:{peer.port}{ssh}  fingerprint {peer.fingerprint[:16]}…")
+    finally:
+        service.stop()
+    return 0
+
+
+def _receive(args: argparse.Namespace) -> int:
+    from fta.app.storage import Store
+    from fta.lan.identity import short_fingerprint
+    from fta.lan.links import local_address, qr_text
+
+    store = Store()
+
+    def ask(offer) -> bool:
+        print(f"\n{offer.sender_name} ({offer.address}) wants to send {offer.describe()}")
+        if args.yes:
+            print("accepted (--yes)")
+            return True
+        try:
+            return input("Accept? [y/N] ").strip().lower() in ("y", "yes", "д", "да")
+        except EOFError:
+            return False
+
+    def update(offer) -> None:
+        if offer.state == "done":
+            print(f"received {offer.file_count} file(s), {offer.received} bytes from {offer.sender_name}")
+
+    service = _lan(store, ask, port=args.port, pin=args.pin or store.settings.lan_pin, directory=args.dir, on_update=update)
+    service.start()
+    address = local_address()
+    link = service.link(address)
+    print(f"Receiving into {service.receiver.directory} as {service.identity.name!r}")
+    print(f"Address {address}:{service.receiver.port}, certificate {short_fingerprint(service.identity.fingerprint)}")
+    print(f"Link: {link.url()}")
+    if args.qr:
+        print(qr_text(link.url()))
+    print("Stop with Ctrl+C.")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        service.stop()
+    return 0
+
+
+def _send(args: argparse.Namespace) -> int:
+    from fta.app.storage import Store
+    from fta.lan.links import looks_like_address, parse_link
+
+    store = Store()
+    service = _lan(store)
+    paths = [Path(p).expanduser() for p in args.paths]
+    target: object
+    if looks_like_address(args.target):
+        target = parse_link(args.target)
+        if not target.fingerprint:
+            print("note: no fingerprint in the target; the device's certificate is not checked", file=sys.stderr)
+    else:
+        service.start()
+        try:
+            target = _wait_for_peers(service, args.wait, args.target)
+        finally:
+            service.stop()
+        if target is None:
+            print(f"fta: error: no device named {args.target!r} answered; try `fta peers`", file=sys.stderr)
+            return 1
+    label = getattr(target, "name", "") or getattr(target, "host", "") or args.target
+    line = _ProgressLine()
+    print(f"Waiting for {label} to accept…", file=sys.stderr)
+    results = service.sender(target, paths, pin=args.pin)(line.update, line.start, False)
+    line.finish()
+    journal = _journal()
+    for result in results:
+        journal.append(
+            JournalEntry(
+                result.source,
+                f"fta://{label}{result.destination}",
+                result.size,
+                "done",
+                seconds=round(result.seconds, 3),
+                sha256=result.sha256,
+                verified=True,
+            )
+        )
+    print(f"sent {len(results)} file(s), checked with SHA-256 on the receiving device")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -179,6 +310,22 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all)")
     serve.add_argument("--user", help="login name (default: from settings, fta)")
     serve.add_argument("--set-password", action="store_true", help="ask for a new password and save its hash")
+
+    send = commands.add_parser("send", help="send files or folders to a nearby device")
+    send.add_argument("target", help="device name (see `fta peers`), fta:// link from its QR code, or host[:port]")
+    send.add_argument("paths", nargs="+", metavar="PATH")
+    send.add_argument("--pin", default="", help="PIN shown on the receiving device, if it asks for one")
+    send.add_argument("--wait", type=float, default=5, help="seconds to look for the device by name (default 5)")
+
+    receive = commands.add_parser("receive", help="accept files from nearby devices")
+    receive.add_argument("--dir", help="where to save (default: from settings, else Downloads/FTA)")
+    receive.add_argument("--port", type=int, default=53318, help="port (default 53318; 0 picks a free one)")
+    receive.add_argument("--pin", help="require this PIN from senders")
+    receive.add_argument("-y", "--yes", action="store_true", help="accept every offer without asking")
+    receive.add_argument("--qr", action="store_true", help="print a QR code with this device's link")
+
+    peers = commands.add_parser("peers", help="list FTA devices on the local network")
+    peers.add_argument("--wait", type=float, default=3, help="seconds to listen (default 3)")
 
     history = commands.add_parser("history", help="show the transfer journal")
     history.add_argument("-n", type=int, default=20, help="how many entries (default 20)")
@@ -207,6 +354,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cp(args)
         elif args.command == "serve":
             return _serve(args)
+        elif args.command == "send":
+            return _send(args)
+        elif args.command == "receive":
+            return _receive(args)
+        elif args.command == "peers":
+            return _peers(args)
         elif args.command == "history":
             journal = _journal()
             if args.csv:

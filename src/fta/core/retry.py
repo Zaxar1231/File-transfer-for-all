@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fta.core.errors import NotFound, UnsupportedOperation, UnsupportedScheme
+from fta.core.errors import AccessDenied, NotFound, UnsupportedOperation, UnsupportedScheme
 
 NOT_RETRYABLE: tuple[type[BaseException], ...] = (
+    AccessDenied,
     NotFound,
     UnsupportedOperation,
     UnsupportedScheme,

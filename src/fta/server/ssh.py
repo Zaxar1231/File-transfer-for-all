@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -58,14 +57,9 @@ class SshServer:
 
     def addresses(self) -> list[str]:
         """Addresses other devices can use; the loopback one only when nothing else exists."""
-        found: list[str] = []
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                probe.connect(("192.0.2.1", 9))  # no packet is sent; picks the outgoing interface
-                found.append(probe.getsockname()[0])
-        except OSError:
-            pass
-        return found or ["127.0.0.1"]
+        from fta.lan.links import local_address
+
+        return [local_address()]
 
     def start(self) -> None:
         if self.running:

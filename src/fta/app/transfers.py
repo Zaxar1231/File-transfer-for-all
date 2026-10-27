@@ -58,6 +58,8 @@ class TransferJob:
     """Higher runs first; equal priorities run in the order they were added."""
     max_retries: int = 0
     verify: bool = False
+    action: Any = None
+    """An ``Action`` run instead of ``copy()``, e.g. a send to a nearby device."""
 
     id: int = field(default_factory=lambda: next(_ids))
     state: JobState = JobState.QUEUED
@@ -104,6 +106,8 @@ class TransferJob:
 
 
 Listener = Callable[[TransferJob], None]
+Action = Callable[[Callable[[int, int | None], None], Callable[[str], None], bool], list[FileResult]]
+"""A job that is not a ``copy()``: ``action(progress, on_file, resume)`` returns the files sent."""
 
 
 class TransferQueue:
@@ -165,6 +169,7 @@ class TransferQueue:
             priority=job.priority,
             max_retries=job.max_retries,
             verify=job.verify,
+            action=job.action,
         )
         fresh._resume = True
         return self.add(fresh)
@@ -283,18 +288,21 @@ class TransferQueue:
 
         job.files_done, job.current_file = 0, ""
         try:
-            job.results = copy(
-                job.source_url,
-                job.destination_url,
-                progress=on_progress,
-                recursive=job.recursive,
-                resume=job._resume,
-                checksum=self.journal is not None,
-                verify=job.verify,
-                on_file=on_file,
-                source_options=job.source_options,
-                destination_options=job.destination_options,
-            )
+            if job.action is not None:
+                job.results = job.action(on_progress, on_file, job._resume)
+            else:
+                job.results = copy(
+                    job.source_url,
+                    job.destination_url,
+                    progress=on_progress,
+                    recursive=job.recursive,
+                    resume=job._resume,
+                    checksum=self.journal is not None,
+                    verify=job.verify,
+                    on_file=on_file,
+                    source_options=job.source_options,
+                    destination_options=job.destination_options,
+                )
         except _Stop:
             job.state = job._stop_state
             job._resume = True

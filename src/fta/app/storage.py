@@ -113,6 +113,15 @@ class Settings:
     server_user: str = "fta"
     server_password_hash: str = ""
     """PBKDF2 hash (fta.server.passwords); the password itself is never stored."""
+    device_name: str = ""
+    """How this device appears to others nearby; empty means the computer's name."""
+    lan_enabled: bool = True
+    """Be visible on the local network and accept offers (each one is confirmed)."""
+    lan_port: int = 53318
+    receive_dir: str = ""
+    """Where files from nearby devices go; empty means Downloads/FTA."""
+    lan_pin: str = ""
+    """When set, senders must type this PIN before their offer is shown."""
 
 
 def default_data_dir() -> Path:
@@ -240,6 +249,13 @@ class Store:
             if connection.name.casefold() == name.casefold() or connection.id == name:
                 return connection.url(path or connection.path), connection.transport_options()
         raise LookupError(f"no saved connection named {name!r}")
+
+    @property
+    def receive_dir(self) -> Path:
+        if self.settings.receive_dir:
+            return Path(self.settings.receive_dir)
+        downloads = Path.home() / "Downloads"
+        return (downloads if downloads.is_dir() else Path.home()) / "FTA"
 
     @property
     def server_root(self) -> Path:

@@ -12,6 +12,7 @@ from fta.core.journal import Journal
 from fta.app.ui import safe_update
 from fta.app.views.browser import BrowserView
 from fta.app.views.connections import ConnectionsView
+from fta.app.views.nearby import NearbyView, offer_text
 from fta.app.views.settings import SettingsView
 from fta.app.views.transfers import TransfersView
 from fta.app.views.update import Updater
@@ -27,6 +28,7 @@ _THEME_MODES = {"system": ft.ThemeMode.SYSTEM, "light": ft.ThemeMode.LIGHT, "dar
 _SECTIONS = (
     ("Файлы", ft.Icons.FOLDER_OUTLINED, ft.Icons.FOLDER),
     ("Передачи", ft.Icons.SWAP_VERT, ft.Icons.SWAP_VERT),
+    ("Рядом", ft.Icons.WIFI_TETHERING, ft.Icons.WIFI_TETHERING),
     ("Подключения", ft.Icons.DNS_OUTLINED, ft.Icons.DNS),
     ("Настройки", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS),
 )
@@ -43,6 +45,8 @@ class App:
         self.index = 0
         self.server = None
         self.server_error = ""
+        self.lan = None
+        self.lan_error = ""
 
         page.title = APP_TITLE
         page.padding = 0
@@ -54,12 +58,13 @@ class App:
         self.updater = Updater(self)
         self.browser = BrowserView(self)
         self.transfers = TransfersView(self)
+        self.nearby = NearbyView(self)
         self.connections = ConnectionsView(self)
         self.settings = SettingsView(self)
-        self.views = [self.browser, self.transfers, self.connections, self.settings]
+        self.views = [self.browser, self.transfers, self.nearby, self.connections, self.settings]
 
         # The active-transfers badge only renders on an Icon (not on the destination itself),
-        # and the selected tab shows selected_icon, so all four icons carry it.
+        # and the selected tab shows selected_icon, so the rail's and the bar's icons all carry it.
         self._badge_icons = [ft.Icon(ft.Icons.SWAP_VERT) for _ in range(4)]
 
         def icons(index: int, offset: int) -> dict[str, ft.IconData | ft.Icon]:
@@ -106,6 +111,7 @@ class App:
         if self.store.settings.check_updates:
             self.updater.check_in_background(silent=True)
         self.apply_server()
+        self.apply_lan()
 
     # --- SSH/SFTP server --------------------------------------------------------------
 
@@ -117,6 +123,8 @@ class App:
             self.server.stop()
             self.server = None
         self.server_error = ""
+        self.lan = None
+        self.lan_error = ""
         if self.store.settings.server_enabled:
             server = server_from_store(self.store, self.queue, self.journal, peers=self.peer_names)
             try:
@@ -126,16 +134,68 @@ class App:
             else:
                 self.server = server
         self.settings.refresh_server()
+        if self.lan is not None:
+            self.apply_lan()  # announce the new SSH port to nearby devices
 
     def shutdown(self) -> None:
-        """Release what outlives the window: the server's port."""
+        """Release what outlives the window: the server's and the receiver's ports."""
         if self.server is not None:
             self.server.stop()
             self.server = None
+        if self.lan is not None:
+            self.lan.stop()
+            self.lan = None
+
+    # --- local network ---------------------------------------------------------------
+
+    def apply_lan(self) -> None:
+        """Start or stop receiving and discovery to match the settings."""
+        from fta.lan.service import LanService
+
+        if self.lan is not None:
+            self.lan.stop()
+            self.lan = None
+        self.lan_error = ""
+        settings = self.store.settings
+        if settings.lan_enabled:
+            lan = LanService(
+                self.store.data_dir,
+                self.store.receive_dir,
+                self.nearby.decide,
+                name=settings.device_name,
+                port=settings.lan_port,
+                pin=settings.lan_pin,
+                on_update=self.nearby.offer_changed,
+                on_peers=self.nearby.refresh,
+                ssh_port=lambda: self.server.port if self.server else None,
+            )
+            try:
+                lan.start()
+            except Exception as exc:  # port taken, no network: shown on the Nearby screen
+                self.lan_error = str(exc) or type(exc).__name__
+            else:
+                self.lan = lan
+        self.nearby.refresh()
+
+    def received(self, offer) -> None:
+        """Files from a nearby device have arrived: journal them and tell the user."""
+        from fta.core.journal import JournalEntry
+
+        for index, item in enumerate(offer.files):
+            if not item.is_dir:
+                self.journal.append(
+                    JournalEntry(f"fta://{offer.sender_name}/{item.path}", str(offer.destinations[index]), item.size, "done")
+                )
+        folder = self.lan.receiver.directory if self.lan else None
+        self.notify(
+            f"Получено от {offer.sender_name}: {offer_text(offer)}",
+            action="Открыть папку" if folder else None,
+            on_action=(lambda e: _open_folder(folder)) if folder else None,
+        )
 
     def peer_names(self) -> list[str]:
         """Devices on the local network, for the server shell's `peers`."""
-        return []
+        return self.lan.peer_names() if self.lan else []
 
     # --- layout and navigation ------------------------------------------------------
 
@@ -232,6 +292,17 @@ class App:
             self.page.show_dialog(snack)
         except (RuntimeError, AssertionError):
             pass
+
+
+def _open_folder(folder) -> None:
+    import subprocess
+    import sys
+
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(folder)])
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
 
 
 def main(page: ft.Page) -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fta"
-version = "0.3.0"
+version = "0.4.0"
 description = "File Transfer for All: a Material You app for moving files over SFTP, FTP, WebDAV, S3 and HTTP"
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,6 +34,9 @@ dependencies = [
     "asyncssh>=2.14",
     "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0",
+    "cryptography>=42",  # self-signed certificate for direct LAN transfers
+    "zeroconf>=0.132",   # finding nearby devices (mDNS/Bonjour)
+    "segno>=1.6",        # QR codes, no image library needed
 ]
 
 [project.urls]
