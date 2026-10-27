@@ -111,10 +111,15 @@ jobs:
 
       - name: Build
         shell: bash
-        run: >
-          flet build ${{ matrix.target }} ${{ matrix.extra }}
-          --yes --no-rich-output
-          --build-version "$VERSION" --build-number "${{ github.run_number }}"
+        # One retry from a clean build folder: the Android build downloads the Python
+        # runtime for several ABIs at once and now and then corrupts its download cache.
+        run: |
+          build() {
+            flet build ${{ matrix.target }} ${{ matrix.extra }} \
+              --yes --no-rich-output \
+              --build-version "$VERSION" --build-number "${{ github.run_number }}"
+          }
+          build || { echo "::warning::build failed, retrying from a clean build folder"; rm -rf build; build; }
 
       - name: Package
         shell: bash
