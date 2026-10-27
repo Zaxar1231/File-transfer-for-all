@@ -1,15 +1,20 @@
-"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | schemes``."""
+"""Command-line interface: ``fta cp | ls | stat | mkdir | rm | history | schemes``."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
 
+from fta.app.storage import default_data_dir
 from fta.core.endpoint import Endpoint
 from fta.core.errors import TransferError
+from fta.core.journal import Journal, JournalEntry
 from fta.core.manager import copy
+from fta.core.retry import is_retryable, retry_delay
 from fta.core.registry import known_schemes, open_transport
 from fta.core.transport import RemoteEntry
 
@@ -54,6 +59,58 @@ def _format_entry(entry: RemoteEntry) -> str:
     return f"{'d' if entry.is_dir else '-'} {size:>12}  {modified:16}  {entry.name}"
 
 
+def _journal() -> Journal:
+    return Journal(default_data_dir() / "journal.jsonl")
+
+
+def _cp(args: argparse.Namespace) -> int:
+    line = _ProgressLine()
+    attempt = 0
+    while True:
+        try:
+            results = copy(
+                args.source,
+                args.destination,
+                progress=line.update,
+                recursive=args.recursive,
+                resume=args.resume or attempt > 0,
+                checksum=True,
+                verify=args.verify,
+                on_file=line.start,
+                source_options=dict(args.src_opt),
+                destination_options=dict(args.dst_opt),
+            )
+            break
+        except (TransferError, OSError) as exc:
+            line.finish()
+            if attempt >= args.retries or not is_retryable(exc):
+                _journal().append(JournalEntry(args.source, args.destination, 0, "failed", error=str(exc)))
+                raise
+            attempt += 1
+            delay = retry_delay(attempt)
+            print(f"fta: {exc}; retry {attempt}/{args.retries} in {delay:.0f} s", file=sys.stderr)
+            time.sleep(delay)
+        finally:
+            line.finish()
+    journal = _journal()
+    for result in results:
+        journal.append(
+            JournalEntry(
+                result.source,
+                result.destination,
+                result.size,
+                "done",
+                seconds=round(result.seconds, 3),
+                sha256=result.sha256,
+                verified=result.verified,
+                resumed_from=result.resumed_from,
+            )
+        )
+        if args.verify:
+            print(f"verified sha256:{result.sha256}  {result.destination}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -62,8 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("source")
     cp.add_argument("destination")
     cp.add_argument("-r", "--recursive", action="store_true", help="copy directories recursively")
+    cp.add_argument("--resume", action="store_true", help="continue partial files instead of resending them")
+    cp.add_argument("--verify", action="store_true", help="compare SHA-256 of both sides after each file")
+    cp.add_argument("--retries", type=int, default=0, metavar="N", help="retry N times, resuming each time")
     _add_option_flag(cp, "--src-opt", "option for the source transport (repeatable)")
     _add_option_flag(cp, "--dst-opt", "option for the destination transport (repeatable)")
+
+    history = commands.add_parser("history", help="show the transfer journal")
+    history.add_argument("-n", type=int, default=20, help="how many entries (default 20)")
+    history.add_argument("--csv", metavar="FILE", help="export the whole journal to a CSV file")
 
     for name, help_text in (
         ("ls", "list a directory"),
@@ -85,19 +149,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "cp":
-            line = _ProgressLine()
-            try:
-                copy(
-                    args.source,
-                    args.destination,
-                    progress=line.update,
-                    recursive=args.recursive,
-                    on_file=line.start,
-                    source_options=dict(args.src_opt),
-                    destination_options=dict(args.dst_opt),
-                )
-            finally:
-                line.finish()
+            return _cp(args)
+        elif args.command == "history":
+            journal = _journal()
+            if args.csv:
+                print(journal.export_csv(Path(args.csv)))
+            for entry in journal.entries(limit=args.n):
+                when = datetime.fromtimestamp(entry.time).strftime("%Y-%m-%d %H:%M")
+                digest = f"  sha256:{entry.sha256[:12]}" if entry.sha256 else ""
+                print(f"{when}  {entry.status:9}  {entry.size:>12}  {entry.source} -> {entry.destination}{digest}")
         elif args.command == "schemes":
             print("\n".join(known_schemes()))
         else:

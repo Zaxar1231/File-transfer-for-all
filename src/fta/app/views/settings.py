@@ -53,6 +53,14 @@ class SettingsView:
             on_change=self._on_theme_mode,
         )
         self.swatches = ft.Row(wrap=True, spacing=12, run_spacing=12)
+        self.retries = ft.SegmentedButton(
+            segments=[ft.Segment(value=str(n), label=ft.Text(str(n))) for n in (0, 1, 3, 5)],
+            selected=[str(settings.retries) if settings.retries in (0, 1, 3, 5) else "3"],
+            on_change=self._on_retries,
+        )
+        self.verify = ft.Switch(
+            label="Проверять SHA-256 после передачи", value=settings.verify, on_change=self._on_verify
+        )
         self.parallel = ft.SegmentedButton(
             segments=[ft.Segment(value=str(n), label=ft.Text(str(n))) for n in (1, 2, 3, 4)],
             selected=[str(settings.parallel_transfers)],
@@ -83,6 +91,9 @@ class SettingsView:
                             self.show_hidden,
                             ft.Text("Одновременных передач"),
                             self.parallel,
+                            ft.Text("Повторов при ошибке (каждый продолжает с места обрыва)"),
+                            self.retries,
+                            self.verify,
                         ),
                         _section(
                             "Обновления",
@@ -110,7 +121,7 @@ class SettingsView:
                                 run_spacing=8,
                             ),
                             ft.Text(
-                                f"Настройки хранятся в {app.store.path}",
+                                f"Настройки: {app.store.path}\nЖурнал: {app.journal.path}\nЛог: {app.log_path}",
                                 theme_style=ft.TextThemeStyle.BODY_SMALL,
                                 color=ft.Colors.ON_SURFACE_VARIANT,
                                 selectable=True,
@@ -153,6 +164,14 @@ class SettingsView:
         self.app.store.settings.seed_color = color
         self._render_swatches()
         self._apply()
+
+    def _on_retries(self, e: ft.Event[ft.SegmentedButton]) -> None:
+        self.app.store.settings.retries = int(e.control.selected[0])
+        self.app.store.save()
+
+    def _on_verify(self, e: ft.Event[ft.Switch]) -> None:
+        self.app.store.settings.verify = bool(e.control.value)
+        self.app.store.save()
 
     def _on_parallel(self, e: ft.Event[ft.SegmentedButton]) -> None:
         self.app.store.settings.parallel_transfers = int(e.control.selected[0])

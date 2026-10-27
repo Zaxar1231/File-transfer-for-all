@@ -15,6 +15,7 @@ from fta.core.transport import (
     RemoteEntry,
     Transport,
     join_path,
+    open_for_resume,
     translate_errors,
 )
 
@@ -25,6 +26,8 @@ class FtpTransport(Transport):
 
     schemes = ("ftp", "ftps")
     library_errors = (ftplib.Error,)
+    can_resume_download = True
+    can_resume_upload = True  # REST before STOR; servers without it answer with an error
 
     _ftp: ftplib.FTP | None = None
 
@@ -50,21 +53,25 @@ class FtpTransport(Transport):
             self._ftp = None
 
     @translate_errors
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
-        tracker = Progress(progress, self._size(remote))
-        with local.open("wb") as out:
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        tracker = Progress(progress, self._size(remote), done=offset)
+        with open_for_resume(local, offset) as out:
 
             def write(chunk: bytes) -> None:
                 out.write(chunk)
                 tracker.advance(len(chunk))
 
-            self._session.retrbinary(f"RETR {remote}", write, blocksize=CHUNK_SIZE)
+            # REST <offset> before RETR makes the server start mid-file
+            self._session.retrbinary(f"RETR {remote}", write, blocksize=CHUNK_SIZE, rest=offset or None)
 
     @translate_errors
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
-        tracker = Progress(progress, local.stat().st_size)
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        tracker = Progress(progress, local.stat().st_size, done=offset)
         with local.open("rb") as fp:
-            self._session.storbinary(f"STOR {remote}", tracker.wrap_reader(fp), blocksize=CHUNK_SIZE)
+            fp.seek(offset)
+            self._session.storbinary(
+                f"STOR {remote}", tracker.wrap_reader(fp), blocksize=CHUNK_SIZE, rest=offset or None
+            )
 
     @translate_errors
     def listdir(self, remote: str) -> list[RemoteEntry]:

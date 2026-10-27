@@ -6,12 +6,14 @@ from pathlib import Path
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
-from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, copy_stream
+from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, copy_stream, open_for_resume
 
 
 @register
 class LocalTransport(Transport):
     schemes = ("", "file")
+    can_resume_download = True
+    can_resume_upload = True
 
     def connect(self) -> None:
         """Nothing to open."""
@@ -19,11 +21,11 @@ class LocalTransport(Transport):
     def close(self) -> None:
         """Nothing to release."""
 
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
-        _copy_file(local, Path(remote), progress)
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        _copy_file(local, Path(remote), progress, offset)
 
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
-        _copy_file(Path(remote), local, progress)
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        _copy_file(Path(remote), local, progress, offset)
 
     def listdir(self, remote: str) -> list[RemoteEntry]:
         return [_entry(child) for child in sorted(Path(remote or ".").iterdir())]
@@ -45,11 +47,12 @@ class LocalTransport(Transport):
             path.unlink()
 
 
-def _copy_file(source: Path, target: Path, progress: ProgressCallback | None) -> None:
+def _copy_file(source: Path, target: Path, progress: ProgressCallback | None, offset: int = 0) -> None:
     if target.exists() and source.samefile(target):
         raise TransferError(f"{source} and {target} are the same file")
-    with source.open("rb") as reader, target.open("wb") as writer:
-        copy_stream(reader, writer, Progress(progress, source.stat().st_size))
+    with source.open("rb") as reader, open_for_resume(target, offset) as writer:
+        reader.seek(offset)
+        copy_stream(reader, writer, Progress(progress, source.stat().st_size, done=offset))
 
 
 def _entry(path: Path) -> RemoteEntry:

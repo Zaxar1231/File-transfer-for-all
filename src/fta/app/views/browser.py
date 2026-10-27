@@ -438,6 +438,8 @@ class BrowserView:
                 recursive=entry.is_dir,
                 source_options=source.options(),
                 destination_options=target.options(),
+                max_retries=self.app.store.settings.retries,
+                verify=self.app.store.settings.verify,
             )
             self._refresh_after[job.id] = target
             self.app.queue.add(job)

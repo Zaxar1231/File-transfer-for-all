@@ -15,3 +15,7 @@ class UnsupportedOperation(TransferError):
 
 class NotFound(TransferError):
     """The remote file or directory does not exist."""
+
+
+class IntegrityError(TransferError):
+    """The copy's SHA-256 does not match the source."""

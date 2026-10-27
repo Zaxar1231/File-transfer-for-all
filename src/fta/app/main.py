@@ -6,8 +6,9 @@ from collections.abc import Callable
 
 import flet as ft
 
-from fta.app.storage import Connection, Store
+from fta.app.storage import Connection, Store, setup_logging
 from fta.app.transfers import TransferQueue
+from fta.core.journal import Journal
 from fta.app.ui import safe_update
 from fta.app.views.browser import BrowserView
 from fta.app.views.connections import ConnectionsView
@@ -35,7 +36,9 @@ class App:
     def __init__(self, page: ft.Page, store: Store | None = None) -> None:
         self.page = page
         self.store = store or Store()
-        self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers)
+        self.log_path = setup_logging(self.store.data_dir, self.store.settings.log_level)
+        self.journal = Journal(self.store.data_dir / "journal.jsonl")
+        self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers, journal=self.journal)
         self._asked_password: set[str] = set()
         self.index = 0
 

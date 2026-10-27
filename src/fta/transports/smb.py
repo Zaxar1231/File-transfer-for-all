@@ -21,6 +21,7 @@ from fta.core.transport import (
     Transport,
     copy_stream,
     join_path,
+    open_for_resume,
     translate_errors,
 )
 
@@ -33,6 +34,9 @@ class SmbTransport(Transport):
     """
 
     schemes = ("smb",)
+
+    can_resume_download = True
+    can_resume_upload = True
 
     _smb: Any = None
     _cache: dict[str, Any] | None = None
@@ -66,16 +70,20 @@ class SmbTransport(Transport):
         self._cache = None
 
     @translate_errors
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
-        tracker = Progress(progress, local.stat().st_size)
-        with local.open("rb") as reader, self._smb.open_file(self._unc(remote), mode="wb", **self._kw) as writer:
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        tracker = Progress(progress, local.stat().st_size, done=offset)
+        # The caller resumes only when the remote file holds exactly ``offset`` bytes, so append.
+        mode = "ab" if offset else "wb"
+        with local.open("rb") as reader, self._smb.open_file(self._unc(remote), mode=mode, **self._kw) as writer:
+            reader.seek(offset)
             copy_stream(reader, writer, tracker)
 
     @translate_errors
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
         unc = self._unc(remote)
-        tracker = Progress(progress, self._smb.stat(unc, **self._kw).st_size)
-        with self._smb.open_file(unc, mode="rb", **self._kw) as reader, local.open("wb") as writer:
+        tracker = Progress(progress, self._smb.stat(unc, **self._kw).st_size, done=offset)
+        with self._smb.open_file(unc, mode="rb", **self._kw) as reader, open_for_resume(local, offset) as writer:
+            reader.seek(offset)
             copy_stream(reader, writer, tracker)
 
     @translate_errors

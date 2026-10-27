@@ -8,7 +8,16 @@ from typing import Any
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
-from fta.core.transport import ProgressCallback, RemoteEntry, Transport, join_path, translate_errors
+from fta.core.transport import (
+    Progress,
+    ProgressCallback,
+    RemoteEntry,
+    Transport,
+    copy_stream,
+    join_path,
+    open_for_resume,
+    translate_errors,
+)
 
 
 @register
@@ -20,6 +29,8 @@ class SftpTransport(Transport):
     """
 
     schemes = ("sftp",)
+    can_resume_download = True
+    can_resume_upload = True
 
     _client: Any = None
     _sftp: Any = None
@@ -60,13 +71,28 @@ class SftpTransport(Transport):
         self._sftp = self._client = None
 
     @translate_errors
-    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None) -> None:
-        # paramiko's callback already has the (done, total) shape
-        self._session.put(str(local), remote, callback=progress)
+    def upload(self, local: Path, remote: str, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        if not offset:
+            # paramiko's callback already has the (done, total) shape
+            self._session.put(str(local), remote, callback=progress)
+            return
+        tracker = Progress(progress, local.stat().st_size, done=offset)
+        with local.open("rb") as reader, self._session.open(remote, "r+b") as writer:
+            writer.set_pipelined(True)
+            reader.seek(offset)
+            writer.seek(offset)
+            copy_stream(reader, writer, tracker)
 
     @translate_errors
-    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None) -> None:
-        self._session.get(remote, str(local), callback=progress)
+    def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
+        if not offset:
+            self._session.get(remote, str(local), callback=progress)
+            return
+        size = self._session.stat(remote).st_size
+        with self._session.open(remote, "rb") as reader, open_for_resume(local, offset) as writer:
+            reader.seek(offset)
+            reader.prefetch(size - offset)
+            copy_stream(reader, writer, Progress(progress, size, done=offset))
 
     @translate_errors
     def listdir(self, remote: str) -> list[RemoteEntry]:
