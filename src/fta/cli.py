@@ -388,6 +388,25 @@ def _share(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync(args: argparse.Namespace) -> int:
+    from fta.core.sync import sync
+
+    line = _ProgressLine()
+    report = sync(
+        args.source,
+        args.destination,
+        manifest=default_data_dir() / "sync-manifest.json",
+        delete=args.delete,
+        progress=line.update,
+        on_file=line.start,
+        source_options=dict(args.src_opt),
+        destination_options=dict(args.dst_opt),
+    )
+    line.finish()
+    print(report.summary())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -401,6 +420,15 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--retries", type=int, default=0, metavar="N", help="retry N times, resuming each time")
     _add_option_flag(cp, "--src-opt", "option for the source transport (repeatable)")
     _add_option_flag(cp, "--dst-opt", "option for the destination transport (repeatable)")
+
+    sync = commands.add_parser("sync", help="mirror a folder; changed files send only their changed blocks")
+    sync.add_argument("source")
+    sync.add_argument("destination")
+    sync.add_argument("--delete", action="store_true", help="also delete destination files missing from the source")
+    _add_option_flag(sync, "--src-opt", "option for the source transport (repeatable)")
+    _add_option_flag(sync, "--dst-opt", "option for the destination transport (repeatable)")
+
+    parser.add_argument("--limit", help="speed limit for all transfers, e.g. 500K or 2M (bytes per second)")
 
     serve = commands.add_parser("serve", help="run the SSH/SFTP server for PuTTY, WinSCP, psftp, ssh")
     serve.add_argument("--root", help="shared folder (default: from settings, else ~/FTA Shared)")
@@ -474,6 +502,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     hostkeys.DEFAULT_PATH = default_data_dir() / "known_hosts"
+    if args.limit:
+        from fta.core.throttle import LIMITER, parse_rate
+
+        LIMITER.set_rate(parse_rate(args.limit))
     from fta.tools import rclone
 
     rclone.DATA_DIR = default_data_dir()
@@ -500,6 +532,8 @@ def _run(args: argparse.Namespace) -> int:
             return _cp(args)
         elif args.command == "serve":
             return _serve(args)
+        elif args.command == "sync":
+            return _sync(args)
         elif args.command == "send":
             return _send(args)
         elif args.command == "receive":

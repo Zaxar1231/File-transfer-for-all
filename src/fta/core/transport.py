@@ -115,6 +115,8 @@ class Transport(ABC):
 
     can_resume_download: ClassVar[bool] = False
     can_resume_upload: ClassVar[bool] = False
+    can_patch: ClassVar[bool] = False
+    """Whether ``patch`` rewrites byte ranges in place (delta sync sends only changed blocks)."""
     """Whether ``download``/``upload`` honour ``offset`` and continue a partial file."""
 
     def __init__(self, endpoint: Endpoint, **options: Any) -> None:
@@ -179,3 +181,26 @@ class Transport(ABC):
     def delete(self, remote: str) -> None:
         """Delete a file or an empty directory."""
         raise UnsupportedOperation(f"{type(self).__name__} cannot delete")
+
+    def patch(
+        self, local: Path, remote: str, ranges: list[tuple[int, int]], size: int, progress: ProgressCallback | None = None
+    ) -> None:
+        """Make the remote file equal to ``local`` by copying only ``ranges`` (start, end) of it
+        into place, then cutting the remote file to ``size``; the rest is assumed identical."""
+        raise UnsupportedOperation(f"{type(self).__name__} cannot patch files in place")
+
+
+def patch_stream(local: Path, writer: BinaryIO, ranges: list[tuple[int, int]], progress: Progress) -> None:
+    """Copy the given byte ranges of ``local`` to the same offsets of an open, seekable ``writer``."""
+    with local.open("rb") as reader:
+        for start, end in ranges:
+            reader.seek(start)
+            writer.seek(start)
+            remaining = end - start
+            while remaining:
+                chunk = reader.read(min(CHUNK_SIZE, remaining))
+                if not chunk:
+                    raise TransferError(f"{local} changed while it was being sent")
+                writer.write(chunk)
+                remaining -= len(chunk)
+                progress.advance(len(chunk))

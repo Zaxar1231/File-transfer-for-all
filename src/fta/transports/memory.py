@@ -31,6 +31,7 @@ class MemoryTransport(Transport):
     schemes = ("mem",)
     can_resume_download = True
     can_resume_upload = True
+    can_patch = True
 
     def connect(self) -> None:
         with _lock:
@@ -59,6 +60,20 @@ class MemoryTransport(Transport):
         with _lock:
             self._files[_norm(remote)] = b"".join(chunks)
             self._add_parents(_norm(remote))
+
+    def patch(
+        self, local: Path, remote: str, ranges: list[tuple[int, int]], size: int, progress: ProgressCallback | None = None
+    ) -> None:
+        tracker = Progress(progress, sum(end - start for start, end in ranges))
+        data = bytearray(self._read(remote))
+        with local.open("rb") as fp:
+            for start, end in ranges:
+                fp.seek(start)
+                chunk = fp.read(end - start)
+                data[start : start + len(chunk)] = chunk
+                tracker.advance(len(chunk))
+        with _lock:
+            self._files[_norm(remote)] = bytes(data[:size])
 
     def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
         data = self._read(remote)

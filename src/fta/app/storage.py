@@ -93,6 +93,48 @@ class Connection:
 
 
 @dataclass
+class Schedule:
+    """A transfer that repeats on its own: a folder synced or copied at a time of day."""
+
+    name: str
+    source: str
+    """A local path, a URL or ``@connection:/path``."""
+    destination: str
+    time: str = "03:00"
+    """HH:MM, local time."""
+    days: list[int] = field(default_factory=lambda: list(range(7)))
+    """Weekdays it runs on, 0 = Monday."""
+    mode: str = "sync"
+    """"sync" mirrors the folder (sending only changed blocks); "copy" copies it again."""
+    delete: bool = False
+    """With "sync": also delete files that are gone from the source."""
+    enabled: bool = True
+    last_run: float = 0.0
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def due(self, now: float) -> float | None:
+        """The start time of a run that should have happened by ``now`` and has not, else None."""
+        import datetime
+
+        if not self.enabled:
+            return None
+        try:
+            hour, minute = (int(part) for part in self.time.split(":"))
+        except ValueError:
+            return None
+        today = datetime.datetime.fromtimestamp(now)
+        slot = today.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if today.weekday() not in self.days or slot.timestamp() > now:
+            return None
+        return slot.timestamp() if self.last_run < slot.timestamp() else None
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> Schedule:
+        known = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in known})
+
+
+@dataclass
 class Settings:
     """Every field can be overridden with an environment variable FTA_<NAME>, e.g. FTA_PARALLEL_TRANSFERS=4."""
 
@@ -128,12 +170,32 @@ class Settings:
     """Where files from nearby devices go; empty means Downloads/FTA."""
     lan_pin: str = ""
     """When set, senders must type this PIN before their offer is shown."""
+    speed_limit_kib: int = 0
+    """All transfers together stay under this many KiB/s; 0 means no limit."""
+
+
+PORTABLE_DIR_NAME = "fta-data"
+
+
+def portable_data_dir() -> Path | None:
+    """Portable mode: an ``fta-data`` folder next to the program (or next to the .app on macOS)
+    holds settings, keys and the journal, so the app runs from a USB stick leaving no trace."""
+    starts = {Path(sys.argv[0]).resolve().parent, Path(sys.executable).resolve().parent}
+    for start in starts:
+        for folder in [start, *list(start.parents)[:3]]:
+            candidate = folder / PORTABLE_DIR_NAME
+            if candidate.is_dir():
+                return candidate
+    return None
 
 
 def default_data_dir() -> Path:
-    """FTA_DATA_DIR, FLET_APP_STORAGE_DATA inside a packaged app, else the usual per-user config dir."""
+    """FTA_DATA_DIR, a portable ``fta-data`` folder, FLET_APP_STORAGE_DATA inside a packaged app,
+    else the usual per-user config dir."""
     if explicit := os.environ.get("FTA_DATA_DIR"):
         return Path(explicit)
+    if portable := portable_data_dir():
+        return portable
     if packaged := os.environ.get("FLET_APP_STORAGE_DATA"):
         return Path(packaged)
     if sys.platform == "win32":
@@ -175,6 +237,7 @@ class Store:
         self.path = path or Path(environ.get("FTA_CONFIG") or default_data_dir() / "config.toml")
         self.data_dir = self.path.parent
         self.connections: list[Connection] = []
+        self.schedules: list[Schedule] = []
         self.temporary: list[Connection] = []
         """Quick connections by address: usable until the app closes, never written to disk."""
         self.overrides = env_overrides(environ)
@@ -188,6 +251,7 @@ class Store:
         if data is None:
             return
         self.connections = [Connection.from_json(item) for item in data.get("connections", [])]
+        self.schedules = [Schedule.from_json(item) for item in data.get("schedules", [])]
         known = {f.name for f in fields(Settings)}
         self._file_settings = Settings(**{k: v for k, v in data.get("settings", {}).items() if k in known})
         self.settings = replace(self._file_settings, **self.overrides)
@@ -223,6 +287,7 @@ class Store:
         data = {
             "settings": settings,
             "connections": [_drop_none(connection.to_json()) for connection in self.connections],
+            "schedules": [asdict(schedule) for schedule in self.schedules],
         }
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)

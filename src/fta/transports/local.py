@@ -6,7 +6,15 @@ from pathlib import Path
 
 from fta.core.errors import NotFound, TransferError
 from fta.core.registry import register
-from fta.core.transport import Progress, ProgressCallback, RemoteEntry, Transport, copy_stream, open_for_resume
+from fta.core.transport import (
+    Progress,
+    ProgressCallback,
+    RemoteEntry,
+    Transport,
+    copy_stream,
+    open_for_resume,
+    patch_stream,
+)
 
 
 @register
@@ -14,6 +22,7 @@ class LocalTransport(Transport):
     schemes = ("", "file")
     can_resume_download = True
     can_resume_upload = True
+    can_patch = True
 
     def connect(self) -> None:
         """Nothing to open."""
@@ -26,6 +35,13 @@ class LocalTransport(Transport):
 
     def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:
         _copy_file(Path(remote), local, progress, offset)
+
+    def patch(
+        self, local: Path, remote: str, ranges: list[tuple[int, int]], size: int, progress: ProgressCallback | None = None
+    ) -> None:
+        with open(remote, "r+b") as writer:
+            patch_stream(local, writer, ranges, Progress(progress, sum(e - s for s, e in ranges)))
+            writer.truncate(size)
 
     def listdir(self, remote: str) -> list[RemoteEntry]:
         return [_entry(child) for child in sorted(Path(remote or ".").iterdir())]
