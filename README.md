@@ -15,7 +15,8 @@ SFTP, SMB (Windows, Samba, NAS), FTP/FTPS, WebDAV, Amazon S3 и S3-совмес�
 | Платформа | Файл |
 |---|---|
 | **Windows** 10/11, x64 | [FileTransferForAll-windows-x64.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-windows-x64.zip) |
-| **macOS** | [FileTransferForAll-macos.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-macos.zip) |
+| **macOS**, Apple Silicon (M1–M4) | [FileTransferForAll-macos-arm64.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-macos-arm64.zip) |
+| **macOS**, Intel | [FileTransferForAll-macos-x64.zip](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-macos-x64.zip) |
 | **Linux** x64 | [FileTransferForAll-linux-x64.tar.gz](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-linux-x64.tar.gz) |
 | **Linux** ARM64 (Raspberry Pi 4/5 и т. п.) | [FileTransferForAll-linux-arm64.tar.gz](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-linux-arm64.tar.gz) |
 | **Android**, любой процессор | [FileTransferForAll-android.apk](https://github.com/Zaxar1231/File-transfer-for-all/releases/latest/download/FileTransferForAll-android.apk) |

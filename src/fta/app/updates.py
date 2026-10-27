@@ -26,7 +26,8 @@ RELEASES_PAGE = f"https://github.com/{REPOSITORY}/releases/latest"
 
 ASSETS = {
     "windows-x64": "FileTransferForAll-windows-x64.zip",
-    "macos": "FileTransferForAll-macos.zip",
+    "macos-arm64": "FileTransferForAll-macos-arm64.zip",
+    "macos-x64": "FileTransferForAll-macos-x64.zip",
     "linux-x64": "FileTransferForAll-linux-x64.tar.gz",
     "linux-arm64": "FileTransferForAll-linux-arm64.tar.gz",
     "android": "FileTransferForAll-android.apk",
@@ -65,7 +66,7 @@ def platform_key(page_platform: str | None, machine: str | None = None) -> str |
     if page_platform == "windows":
         return "windows-x64"  # Windows on ARM runs the x64 build under emulation
     if page_platform == "macos":
-        return "macos"
+        return "macos-arm64" if machine in ("arm64", "aarch64") else "macos-x64"
     if page_platform == "linux":
         return "linux-arm64" if machine in ("aarch64", "arm64") else "linux-x64"
     return None  # iOS and web have no downloadable build

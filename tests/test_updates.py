@@ -37,7 +37,8 @@ def test_is_newer(candidate, current, newer):
     ("platform", "machine", "key"),
     [
         ("windows", "AMD64", "windows-x64"),
-        ("macos", "arm64", "macos"),
+        ("macos", "arm64", "macos-arm64"),
+        ("macos", "x86_64", "macos-x64"),
         ("linux", "x86_64", "linux-x64"),
         ("linux", "aarch64", "linux-arm64"),
         ("android", "aarch64", "android"),

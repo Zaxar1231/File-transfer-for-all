@@ -111,8 +111,10 @@ class Updater:
     def _installed(self, path) -> None:
         how = {
             "windows-x64": "Распакуйте архив и замените папку со старой версией.",
-            "macos": "Распакуйте архив и перетащите приложение в «Программы» с заменой.",
+            "macos-arm64": "Распакуйте архив и перетащите приложение в «Программы» с заменой.",
         }.get(self.platform_key or "", "Распакуйте архив на место старой версии.")
+        if (self.platform_key or "").startswith("macos"):
+            how = "Распакуйте архив и перетащите приложение в «Программы» с заменой."
         self.app.page.show_dialog(
             ft.AlertDialog(
                 icon=ft.Icon(ft.Icons.CHECK_CIRCLE),

@@ -24,7 +24,9 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-latest, target: windows }
-          - { name: macos, os: macos-latest, target: macos }
+          # One build per CPU: a universal build cross-installs x86_64 wheels and fails on cryptography.
+          - { name: macos-arm64, os: macos-latest, target: macos, extra: --arch arm64 }
+          - { name: macos-x64, os: macos-15-intel, target: macos, extra: --arch x86_64 }
           # Ubuntu 22.04 keeps glibc old (2.35), so the build also runs on older distributions.
           - { name: linux-x64, os: ubuntu-22.04, target: linux }
           - { name: linux-arm64, os: ubuntu-22.04-arm, target: linux }
@@ -74,9 +76,9 @@ jobs:
           case "${{ matrix.name }}" in
             windows-x64)
               (cd build/windows && 7z a -tzip "$GITHUB_WORKSPACE/dist/FileTransferForAll-windows-x64.zip" .) ;;
-            macos)
+            macos-*)
               app=$(ls -d build/macos/*.app | head -1)
-              ditto -c -k --keepParent "$app" dist/FileTransferForAll-macos.zip ;;
+              ditto -c -k --keepParent "$app" "dist/FileTransferForAll-${{ matrix.name }}.zip" ;;
             linux-*)
               tar -C build/linux -czf "dist/FileTransferForAll-${{ matrix.name }}.tar.gz" . ;;
             android)
