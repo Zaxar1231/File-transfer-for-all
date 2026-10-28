@@ -27,8 +27,20 @@ _STATE_LOOK = {
 }
 
 
-def describe(job: TransferJob) -> str:
-    """Status line under the progress bar."""
+def describe(job: TransferJob, sysadmin: bool = False) -> str:
+    """Status line under the progress bar; the sysadmin mode adds the raw numbers."""
+    text = _describe(job)
+    if not sysadmin:
+        return text
+    details = [f"#{job.id}", f"попытка {job.attempts}/{job.max_retries + 1}", f"{job.bytes_done:,} Б".replace(",", " ")]
+    if job.speed:
+        details.append(f"{job.speed * 8 / 1_000_000:.1f} Мбит/с")
+    if job.state is JobState.DONE and job.results:
+        details.append("sha256 " + job.results[-1].sha256 if job.results[-1].sha256 else "без хеша")
+    return text + "\n" + " · ".join(details) + f"\n{job.source_url or job.source} → {job.destination_url}"
+
+
+def _describe(job: TransferJob) -> str:
     if job.state is JobState.QUEUED:
         if job.waiting_for_retry:
             return (
@@ -132,7 +144,10 @@ class JobCard:
     def refresh(self) -> None:
         job = self.job
         self.icon.icon, self.icon.color = _STATE_LOOK[job.state]
-        self.status.value = describe(job)
+        sysadmin = self.app.store.settings.sysadmin
+        self.status.value = describe(job, sysadmin)
+        self.status.max_lines = 4 if sysadmin else 2
+        self.status.selectable = sysadmin
         failed = job.state is JobState.FAILED or job.waiting_for_retry
         self.status.color = ft.Colors.ERROR if failed else ft.Colors.ON_SURFACE_VARIANT
         self.progress.value = 0 if job.state is JobState.QUEUED else job.fraction
@@ -179,6 +194,7 @@ class TransfersView:
             [
                 headline(
                     "Передачи",
+                    ft.TextButton("Статистика", icon=ft.Icons.INSIGHTS, on_click=lambda e: self._stats()),
                     ft.TextButton("Расписание", icon=ft.Icons.SCHEDULE, on_click=lambda e: self._schedules()),
                     journal_button,
                     self.clear_button,
@@ -190,7 +206,13 @@ class TransfersView:
             spacing=16
         )
         self._render_body()
+        self._celebrated: set[int] = set()
         app.queue.subscribe(self._on_job)
+
+    def _stats(self) -> None:
+        from fta.app.views.stats import StatsDialog
+
+        StatsDialog(self.app).show()
 
     def _schedules(self) -> None:
         from fta.app.views.schedules import SchedulesDialog
@@ -215,6 +237,12 @@ class TransfersView:
                 if job.state.finished:
                     self._render_body()
                     safe_update(card.view, self.clear_button)
+                    if job.state is JobState.DONE and job.id not in self._celebrated:
+                        self._celebrated.add(job.id)
+                        if self.app.store.settings.fun_messages:
+                            from fta.fun import vzhuh
+
+                            self.app.notify(vzhuh(job.name))
                 else:
                     safe_update(card.view)
         self.app.update_badge()

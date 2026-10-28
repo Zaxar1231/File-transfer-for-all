@@ -48,6 +48,9 @@ class App:
         self.queue = TransferQueue(parallel=self.store.settings.parallel_transfers, journal=self.journal)
         self._asked_password: set[str] = set()
         self.index = 0
+        from fta.fun import KonamiDetector
+
+        self.konami = KonamiDetector()
         self.server = None
         self.server_error = ""
         self.lan = None
@@ -213,6 +216,10 @@ class App:
         """Files from a nearby device have arrived: journal them and tell the user."""
         from fta.core.journal import JournalEntry
 
+        if not offer.files:  # «мем-почта»: just a note
+            self.notify(f"✉ {offer.sender_name}: {offer.message}", sticky=True)
+            return
+
         for index, item in enumerate(offer.files):
             if not item.is_dir:
                 self.journal.append(
@@ -256,6 +263,20 @@ class App:
     def _on_keyboard(self, e: ft.KeyboardEvent) -> None:
         if self.views[self.index] is self.terminal:
             self.terminal.on_keyboard(e)
+            return
+        if self.konami.press(e.key):
+            self.set_sysadmin(not self.store.settings.sysadmin)
+
+    def set_sysadmin(self, on: bool) -> None:
+        """↑↑↓↓←→←→BA: raw numbers everywhere, for people who like them."""
+        self.store.settings.sysadmin = on
+        self.store.save()
+        for card in self.transfers.cards.values():
+            card.refresh()
+        safe_update(self.transfers.view)
+        self.settings.sysadmin_switch.value = on
+        safe_update(self.settings.sysadmin_switch)
+        self.notify("Режим «Сисадмин» включён. sudo make me a sandwich 🥪" if on else "Режим «Сисадмин» выключен")
 
     def update_badge(self) -> None:
         active = self.queue.active_count
@@ -376,13 +397,15 @@ class App:
             )
         )
 
-    def notify(self, message: str, error: bool = False, action: str | None = None, on_action=None) -> None:
+    def notify(self, message: str, error: bool = False, action: str | None = None, on_action=None, sticky: bool = False) -> None:
+        """A snackbar; errors and ``sticky`` ones (a note from a person) stay until closed."""
         snack = ft.SnackBar(
             ft.Text(message),
             action=action,
             on_action=on_action,
-            show_close_icon=error,
+            show_close_icon=error or sticky,
             behavior=ft.SnackBarBehavior.FLOATING,
+            **({"duration": ft.Duration(hours=1)} if sticky else {}),
         )
         try:
             self.page.show_dialog(snack)
