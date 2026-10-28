@@ -128,6 +128,11 @@ class App:
             self.updater.check_in_background(silent=True)
         self.apply_server()
         self.apply_lan()
+        self.apply_speed_limit()
+        from fta.app.scheduler import Scheduler
+
+        self.scheduler = Scheduler(self.store, self.queue, on_run=self._schedule_started)
+        self.scheduler.start()
 
     # --- SSH/SFTP server --------------------------------------------------------------
 
@@ -153,6 +158,14 @@ class App:
         if self.lan is not None:
             self.apply_lan()  # announce the new SSH port to nearby devices
 
+    def _schedule_started(self, schedule) -> None:
+        self.notify(f"По расписанию: {schedule.name}", action="Передачи", on_action=lambda e: self.go(1))
+
+    def apply_speed_limit(self) -> None:
+        from fta.core.throttle import LIMITER
+
+        LIMITER.set_rate(self.store.settings.speed_limit_kib * 1024)
+
     def shutdown(self) -> None:
         """Release what outlives the window: the server's and the receiver's ports."""
         if self.server is not None:
@@ -162,6 +175,8 @@ class App:
             self.lan.stop()
             self.lan = None
         self.terminal.disconnect()
+        if getattr(self, "scheduler", None) is not None:
+            self.scheduler.stop()
 
     # --- local network ---------------------------------------------------------------
 

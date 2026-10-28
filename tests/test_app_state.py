@@ -256,3 +256,18 @@ def test_split_address():
     assert split_address(" nas.local:2222 ", None) == ("nas.local", 2222)
     assert split_address("[fe80::1]:2200", None) == ("fe80::1", 2200)
     assert split_address("fe80::1", 22) == ("fe80::1", 22)
+
+
+def test_portable_mode_keeps_data_next_to_the_program(tmp_path, monkeypatch):
+    import sys
+
+    from fta.app import storage
+
+    program = tmp_path / "stick" / "FileTransferForAll"
+    program.mkdir(parents=True)
+    monkeypatch.delenv("FTA_DATA_DIR", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(program / "fta-app")])
+    monkeypatch.setattr(sys, "executable", str(program / "python"))
+    assert storage.portable_data_dir() is None
+    (tmp_path / "stick" / "fta-data").mkdir()  # next to the program's folder, e.g. on a USB stick
+    assert storage.default_data_dir() == tmp_path / "stick" / "fta-data"

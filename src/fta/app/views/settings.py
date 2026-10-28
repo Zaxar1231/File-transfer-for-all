@@ -66,6 +66,15 @@ class SettingsView:
             selected=[str(settings.parallel_transfers)],
             on_change=self._on_parallel,
         )
+        limits = {"0": "Нет", "512": "512 КБ/с", "1024": "1 МБ/с", "5120": "5 МБ/с", "10240": "10 МБ/с"}
+        current = str(settings.speed_limit_kib)
+        if current not in limits:
+            limits[current] = f"{settings.speed_limit_kib} КБ/с"
+        self.speed_limit = ft.SegmentedButton(
+            segments=[ft.Segment(value=key, label=ft.Text(text)) for key, text in limits.items()],
+            selected=[current],
+            on_change=self._on_speed_limit,
+        )
         self.show_hidden = ft.Switch(
             label="Показывать скрытые файлы", value=settings.show_hidden, on_change=self._on_show_hidden
         )
@@ -97,6 +106,8 @@ class SettingsView:
                             ft.Text("Повторов при ошибке (каждый продолжает с места обрыва)"),
                             self.retries,
                             self.verify,
+                            ft.Text("Ограничение скорости для всех передач вместе"),
+                            self.speed_limit,
                         ),
                         _section(
                             "Устройства рядом",
@@ -439,6 +450,11 @@ class SettingsView:
     def _on_retries(self, e: ft.Event[ft.SegmentedButton]) -> None:
         self.app.store.settings.retries = int(e.control.selected[0])
         self.app.store.save()
+
+    def _on_speed_limit(self, e: ft.Event[ft.SegmentedButton]) -> None:
+        self.app.store.settings.speed_limit_kib = int(e.control.selected[0])
+        self.app.store.save()
+        self.app.apply_speed_limit()
 
     def _on_verify(self, e: ft.Event[ft.Switch]) -> None:
         self.app.store.settings.verify = bool(e.control.value)

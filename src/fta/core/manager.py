@@ -12,6 +12,7 @@ from typing import Any
 from fta.core.endpoint import Endpoint
 from fta.core.errors import IntegrityError, TransferError
 from fta.core.integrity import Digest, file_digest
+from fta.core.throttle import Metered
 from fta.core.registry import open_transport
 from fta.core.transport import ProgressCallback, Transport, join_path
 
@@ -89,7 +90,7 @@ class _Copier:
         self.src = src
         self.dst = dst
         self.staging = staging
-        self.progress = progress
+        self.progress = Metered(progress)  # every byte passes the shared speed limit
         self.on_file = on_file
         self.resume = resume
         self.checksum = checksum

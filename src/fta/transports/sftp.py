@@ -18,6 +18,7 @@ from fta.core.transport import (
     copy_stream,
     join_path,
     open_for_resume,
+    patch_stream,
     translate_errors,
 )
 
@@ -34,6 +35,7 @@ class SftpTransport(Transport):
     schemes = ("sftp",)
     can_resume_download = True
     can_resume_upload = True
+    can_patch = True
 
     _client: Any = None
     _sftp: Any = None
@@ -96,6 +98,15 @@ class SftpTransport(Transport):
             reader.seek(offset)
             writer.seek(offset)
             copy_stream(reader, writer, tracker)
+
+    @translate_errors
+    def patch(
+        self, local: Path, remote: str, ranges: list[tuple[int, int]], size: int, progress: ProgressCallback | None = None
+    ) -> None:
+        with self._session.open(remote, "r+b") as writer:
+            writer.set_pipelined(True)
+            patch_stream(local, writer, ranges, Progress(progress, sum(end - start for start, end in ranges)))
+        self._session.truncate(remote, size)
 
     @translate_errors
     def download(self, remote: str, local: Path, progress: ProgressCallback | None = None, offset: int = 0) -> None:

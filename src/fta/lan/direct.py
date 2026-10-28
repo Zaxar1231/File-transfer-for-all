@@ -38,6 +38,7 @@ from urllib.parse import parse_qs, urlsplit
 from fta import __version__
 from fta.core.errors import AccessDenied, IntegrityError, TransferError
 from fta.core.manager import FileResult
+from fta.core.throttle import Metered
 from fta.lan.identity import Identity, certificate_fingerprint
 from fta.lan.links import DEFAULT_PORT
 from fta.lan.shares import Share, ShareRegistry
@@ -581,6 +582,7 @@ def send_files(
     """
     items = collect(paths)
     total = sum(item.size for item, _ in items if not item.is_dir)
+    progress = Metered(progress)  # the app-wide speed limit applies to nearby devices too
     me = {"id": sender.id if sender else "", "name": sender_name or (sender.name if sender else socket.gethostname())}
     conn = _PinnedConnection(host, port, fingerprint, timeout)
     try:

@@ -176,10 +176,26 @@ class TransfersView:
         self.clear_button = ft.TextButton("Очистить завершённые", icon=ft.Icons.CLEAR_ALL, on_click=self._clear)
         journal_button = ft.TextButton("Журнал", icon=ft.Icons.HISTORY, on_click=lambda e: self.show_journal())
         self.view = ft.Column(
-            [headline("Передачи", journal_button, self.clear_button), self.list, self.empty], expand=True, spacing=16
+            [
+                headline(
+                    "Передачи",
+                    ft.TextButton("Расписание", icon=ft.Icons.SCHEDULE, on_click=lambda e: self._schedules()),
+                    journal_button,
+                    self.clear_button,
+                ),
+                self.list,
+                self.empty,
+            ],
+            expand=True,
+            spacing=16
         )
         self._render_body()
         app.queue.subscribe(self._on_job)
+
+    def _schedules(self) -> None:
+        from fta.app.views.schedules import SchedulesDialog
+
+        SchedulesDialog(self.app).show()
 
     def _render_body(self) -> None:
         self.list.visible = bool(self.cards)
