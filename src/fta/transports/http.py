@@ -80,8 +80,13 @@ class HttpTransport(Transport):
             credentials = f"{self.username}:{self.password or ''}".encode()
             all_headers["Authorization"] = "Basic " + base64.b64encode(credentials).decode("ascii")
         request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
+        open_url = urllib.request.urlopen
+        if proxy_url := self.options.get("proxy"):
+            from fta.core.proxy import opener
+
+            open_url = opener(proxy_url).open
         try:
-            return urllib.request.urlopen(request, timeout=self.float_option("timeout", 30))
+            return open_url(request, timeout=self.float_option("timeout", 30))
         except urllib.error.HTTPError as exc:
             exc.close()
             location = urlsplit(urllib.parse.urljoin(url, exc.headers.get("Location", ""))).path

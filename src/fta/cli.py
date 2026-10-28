@@ -434,6 +434,42 @@ def _stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ipfs(args: argparse.Namespace) -> int:
+    from fta.transports import ipfs
+
+    for name in args.files:
+        cid = ipfs.add(Path(name), {"api": args.api} if args.api else None)
+        print(f"{cid}  {name}")
+        print(f"  ipfs://{cid}   {ipfs.DEFAULT_GATEWAY}/ipfs/{cid}")
+    return 0
+
+
+def _tailscale(args: argparse.Namespace) -> int:
+    from fta.lan.direct import fetch_info
+    from fta.lan.links import DEFAULT_PORT, PeerLink
+    from fta.tools import tailscale
+
+    peers = tailscale.peers()
+    if not args.target:
+        for peer in peers:
+            print(f"{'online ' if peer.online else 'offline'}  {peer.name:20} {peer.address:16} {peer.os}")
+        return 0
+    peer = next((p for p in peers if args.target in (p.name, p.address, p.dns_name)), None)
+    if peer is None:
+        print(f"fta: error: no device {args.target!r} in your tailnet", file=sys.stderr)
+        return 1
+    paths = [Path(p) for p in args.paths]
+    try:
+        info, fingerprint = fetch_info(peer.address, DEFAULT_PORT, timeout=3)
+    except TransferError:
+        print(f"{peer.name} has no File Transfer for All running: sending with Taildrop", file=sys.stderr)
+        tailscale.taildrop(paths, peer)
+        print(f"sent {len(paths)} file(s) to {peer.name}'s Taildrop inbox")
+        return 0
+    args.target = PeerLink(peer.address, DEFAULT_PORT, fingerprint, info.get("name") or peer.name).url()
+    return _send(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -501,6 +537,16 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--days", type=int, default=0, help="only the last N days")
     stats.add_argument("--card", metavar="FILE.svg", help="write a summary card picture")
     commands.add_parser("ёж", aliases=["hedgehog"], help="a hedgehog")
+
+    ipfs = commands.add_parser("ipfs", help="publish files to IPFS through the local node (read with fta cp ipfs://CID)")
+    ipfs.add_argument("action", choices=["add"])
+    ipfs.add_argument("files", nargs="+", metavar="FILE")
+    ipfs.add_argument("--api", help="the node's API (default http://127.0.0.1:5001)")
+
+    tailnet = commands.add_parser("tailscale", help="devices in your tailnet; with a device and files, send to it")
+    tailnet.add_argument("target", nargs="?", help="device name or 100.x address")
+    tailnet.add_argument("paths", nargs="*", metavar="PATH")
+    tailnet.add_argument("--pin", default="", help="PIN, if the receiving app asks for one")
 
     peers = commands.add_parser("peers", help="list FTA devices on the local network")
     peers.add_argument("--wait", type=float, default=3, help="seconds to listen (default 3)")
@@ -586,6 +632,10 @@ def _run(args: argparse.Namespace) -> int:
             return _share(args)
         elif args.command == "stats":
             return _stats(args)
+        elif args.command == "ipfs":
+            return _ipfs(args)
+        elif args.command == "tailscale":
+            return _tailscale(args)
         elif args.command in ("ёж", "hedgehog"):
             from fta.fun import HEDGEHOG, random_meme
 

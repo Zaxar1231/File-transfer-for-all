@@ -1,9 +1,9 @@
-.TH FTA 1 "" "fta 0.9.0" "File Transfer for All"
+.TH FTA 1 "" "fta 1.0.0" "File Transfer for All"
 .SH NAME
 fta \- transfer files over SFTP, FTP, SMB, WebDAV, S3, HTTP, clouds and to nearby devices
 .SH SYNOPSIS
 .B fta
-[\-h] [\-\-limit LIMIT] {cp,sync,serve,send,receive,cloud,encrypt,decrypt,keygen,share,stats,ёж,hedgehog,peers,history,ls,stat,mkdir,rm,schemes} ...
+[\-h] [\-\-limit LIMIT] {cp,sync,serve,send,receive,cloud,encrypt,decrypt,keygen,share,stats,ёж,hedgehog,ipfs,tailscale,peers,history,ls,stat,mkdir,rm,schemes} ...
 .SH DESCRIPTION
 fta is the command line of File Transfer for All. Locations are local paths, URLs such as sftp://user@host/dir, smb://server/share, ftp://, dav://, s3://bucket, rclone://cloud/ and @connection:/path for connections saved in the app.
 .SH GLOBAL OPTIONS
@@ -185,6 +185,32 @@ write a summary card picture
 a hedgehog
 .PP
 .B fta ёж [\-h]
+.SS ipfs
+publish files to IPFS through the local node (read with fta cp ipfs://CID)
+.PP
+.B fta ipfs [\-h] [\-\-api API] {add} FILE [FILE ...]
+.TP
+.B action
+
+.TP
+.B FILE
+
+.TP
+.B \-\-api
+the node\(aqs API (default http://127.0.0.1:5001)
+.SS tailscale
+devices in your tailnet; with a device and files, send to it
+.PP
+.B fta tailscale [\-h] [\-\-pin PIN] [target] [PATH ...]
+.TP
+.B target
+device name or 100.x address
+.TP
+.B PATH
+
+.TP
+.B \-\-pin
+PIN, if the receiving app asks for one
 .SS peers
 list FTA devices on the local network
 .PP

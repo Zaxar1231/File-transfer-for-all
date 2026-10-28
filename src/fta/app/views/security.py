@@ -254,3 +254,63 @@ class ShareDialog:
     async def _copy(self, url: str) -> None:
         await self.app.clipboard.set(url)
         self.app.notify("Ссылка скопирована")
+
+
+def publish_to_ipfs(app: App, paths: list[Path]) -> None:
+    """Add files to the local IPFS node and show their addresses (CID, gateway link, QR)."""
+    from fta.transports import ipfs
+
+    if not paths:
+        return
+    if not ipfs.node_available(ipfs.api_url()):
+        app.notify("Нужен запущенный узел IPFS: IPFS Desktop или `ipfs daemon`", error=True)
+        return
+    dialog, text, bar = _busy_dialog(app, "Публикация в IPFS")
+    app.page.show_dialog(dialog)
+
+    def worker() -> None:
+        results, errors = [], []
+        for path in paths:
+            text.value = path.name
+            safe_update(text)
+            try:
+                results.append((path.name, ipfs.add(path, progress=lambda d, t: (setattr(bar, "value", d / t if t else None), safe_update(bar)))))
+            except Exception as exc:  # shown below
+                errors.append(f"{path.name}: {exc}")
+        app.page.pop_dialog()
+        if errors:
+            app.notify("; ".join(errors), error=True)
+        if not results:
+            return
+        rows: list[ft.Control] = []
+        for name, cid in results:
+            link = f"{ipfs.DEFAULT_GATEWAY}/ipfs/{cid}"
+            rows += [
+                ft.Text(name, theme_style=ft.TextThemeStyle.TITLE_SMALL),
+                ft.Text(f"ipfs://{cid}\n{link}", selectable=True, theme_style=ft.TextThemeStyle.BODY_SMALL),
+            ]
+        first_link = f"{ipfs.DEFAULT_GATEWAY}/ipfs/{results[0][1]}"
+        app.page.show_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.HUB_OUTLINED),
+                title=ft.Text("Опубликовано в IPFS"),
+                content=ft.Column(
+                    [
+                        ft.Container(ft.Image(src=qr_png(first_link), width=180, height=180), bgcolor=ft.Colors.WHITE, border_radius=12, padding=6),
+                        *rows,
+                        ft.Text(
+                            "Файл закреплён на вашем узле. Пока узел в сети, его можно открыть по CID с любого шлюза.",
+                            theme_style=ft.TextThemeStyle.BODY_SMALL,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
+                        ),
+                    ],
+                    tight=True,
+                    spacing=8,
+                    width=460,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                actions=[ft.TextButton("Готово", on_click=lambda e: app.page.pop_dialog())],
+            )
+        )
+
+    app.page.run_thread(worker)

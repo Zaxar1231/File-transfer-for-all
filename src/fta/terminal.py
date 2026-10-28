@@ -71,6 +71,7 @@ class SshTerminal:
         cols: int = 100,
         rows: int = 30,
         known_hosts: Path | None = None,
+        proxy: str = "",
         on_change: Callable[[], None] | None = None,
         on_close: Callable[[str], None] | None = None,
     ) -> None:
@@ -79,6 +80,7 @@ class SshTerminal:
         self.host, self.port, self.username = host, port, username
         self._password, self._key_file = password, key_file
         self.known_hosts = known_hosts
+        self.proxy = proxy
         self.on_change = on_change or (lambda: None)
         self.on_close = on_close or (lambda reason: None)
         self._replies: list[bytes] = []
@@ -106,6 +108,11 @@ class SshTerminal:
         import paramiko
 
         client = paramiko.SSHClient()
+        extra = {}
+        if self.proxy:  # Tor or another SOCKS proxy
+            from fta.core.proxy import Proxy
+
+            extra["sock"] = Proxy.parse(self.proxy).connect(self.host, self.port, timeout)
         try:
             hostkeys.connect(
                 client,
@@ -118,6 +125,7 @@ class SshTerminal:
                 timeout=timeout,
                 look_for_keys=not self._password,
                 allow_agent=not self._password,
+                **extra,
             )
             channel = client.invoke_shell(term=TERM, width=self.screen.columns, height=self.screen.lines)
         except (hostkeys.UnknownHostKey, hostkeys.HostKeyChanged):

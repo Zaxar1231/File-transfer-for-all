@@ -1,6 +1,6 @@
 """fta: one API for copying files over many protocols."""
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 """Keep in sync with [project].version in pyproject.toml; release tags are v<version>."""
 
 from fta.core.endpoint import Endpoint  # noqa: E402

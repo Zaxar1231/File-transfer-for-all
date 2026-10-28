@@ -65,6 +65,7 @@ class Pane:
                 ft.PopupMenuItem(content="Зашифровать (age)…", icon=ft.Icons.LOCK_OUTLINE, on_click=lambda e: self._encrypt()),
                 ft.PopupMenuItem(content="Расшифровать…", icon=ft.Icons.LOCK_OPEN, on_click=lambda e: self._decrypt()),
                 ft.PopupMenuItem(content="Поделиться ссылкой…", icon=ft.Icons.SHARE_OUTLINED, on_click=lambda e: self._share()),
+                ft.PopupMenuItem(content="Опубликовать в IPFS…", icon=ft.Icons.HUB_OUTLINED, on_click=lambda e: self._ipfs()),
             ],
         )
         self.selection_text = ft.Text("", theme_style=ft.TextThemeStyle.LABEL_LARGE, color=ft.Colors.PRIMARY)
@@ -300,6 +301,11 @@ class Pane:
         from fta.app.views.security import DecryptDialog
 
         DecryptDialog(self.app, [p for p in self._selected_paths() if p.is_file()], self.load).show()
+
+    def _ipfs(self) -> None:
+        from fta.app.views.security import publish_to_ipfs
+
+        publish_to_ipfs(self.app, [p for p in self._selected_paths() if p.is_file()])
 
     def _share(self) -> None:
         from fta.app.views.security import ShareDialog
