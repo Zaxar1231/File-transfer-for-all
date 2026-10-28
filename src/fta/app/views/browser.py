@@ -57,6 +57,16 @@ class Pane:
         self.delete_button = ft.IconButton(
             ft.Icons.DELETE_OUTLINE, tooltip="Удалить выбранное", on_click=self._confirm_delete, disabled=True
         )
+        self.more_button = ft.PopupMenuButton(
+            icon=ft.Icons.MORE_VERT,
+            tooltip="Шифрование и ссылки",
+            disabled=True,
+            items=[
+                ft.PopupMenuItem(content="Зашифровать (age)…", icon=ft.Icons.LOCK_OUTLINE, on_click=lambda e: self._encrypt()),
+                ft.PopupMenuItem(content="Расшифровать…", icon=ft.Icons.LOCK_OPEN, on_click=lambda e: self._decrypt()),
+                ft.PopupMenuItem(content="Поделиться ссылкой…", icon=ft.Icons.SHARE_OUTLINED, on_click=lambda e: self._share()),
+            ],
+        )
         self.selection_text = ft.Text("", theme_style=ft.TextThemeStyle.LABEL_LARGE, color=ft.Colors.PRIMARY)
         self.list = ft.ListView(expand=True, spacing=2)
         self.spinner = ft.Container(
@@ -84,6 +94,7 @@ class Pane:
                                 ft.Icons.CREATE_NEW_FOLDER_OUTLINED, tooltip="Новая папка", on_click=self._ask_new_folder
                             ),
                             self.delete_button,
+                            self.more_button,
                         ],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -271,10 +282,33 @@ class Pane:
         count = len(self.selected)
         self.selection_text.value = f"Выбрано: {count}" if count else ""
         self.delete_button.disabled = not count
-        safe_update(self.selection_text, self.delete_button)
+        self.more_button.disabled = not count or self.connection is not None  # local files only
+        safe_update(self.selection_text, self.delete_button, self.more_button)
         self.on_selection_change()
 
     # --- actions -------------------------------------------------------------------
+
+    def _selected_paths(self) -> list[Path]:
+        return [Path(entry.path) for entry in self.selected.values()]
+
+    def _encrypt(self) -> None:
+        from fta.app.views.security import EncryptDialog
+
+        EncryptDialog(self.app, [p for p in self._selected_paths() if p.is_file()], self.load).show()
+
+    def _decrypt(self) -> None:
+        from fta.app.views.security import DecryptDialog
+
+        DecryptDialog(self.app, [p for p in self._selected_paths() if p.is_file()], self.load).show()
+
+    def _share(self) -> None:
+        from fta.app.views.security import ShareDialog
+
+        paths = self._selected_paths()
+        if len(paths) != 1:
+            self.app.notify("Выберите один файл или одну папку", error=True)
+            return
+        ShareDialog(self.app, paths[0]).show()
 
     async def _pick_folder(self, e: ft.Event[ft.IconButton]) -> None:
         path = await self.app.picker.get_directory_path(dialog_title="Выберите папку", initial_directory=self.path)

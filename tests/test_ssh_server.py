@@ -238,3 +238,63 @@ def test_shell_refuses_local_paths_outside_the_share(context, tmp_path):
     assert "not allowed" in shell.run(f"recv file://{secret}")
     assert "not allowed" in shell.run(f"send docs/report.txt {tmp_path / 'dropped.txt'}")
     assert context.queue.jobs == []
+
+
+def test_two_factor_login(tmp_path, context):
+    from fta.crypto import totp
+
+    secret = totp.new_secret()
+    config = SshServerConfig(
+        root=context.root,
+        host_key=tmp_path / "host_key_2fa",
+        port=0,
+        host="127.0.0.1",
+        users={"alice": hash_password(PASSWORD)},
+        totp_secret=secret,
+    )
+    server = SshServer(config, lambda: context)
+    server.start()
+    try:
+        def login(password, code):
+            transport = paramiko.Transport(("127.0.0.1", server.port))
+            transport.start_client()
+            try:
+                answers = iter([password, code])
+                transport.auth_interactive("alice", lambda title, instructions, prompts: [next(answers) for _ in prompts])
+                return transport.is_authenticated()
+            except paramiko.AuthenticationException:
+                return False
+            finally:
+                transport.close()
+
+        # A plain password is no longer enough.
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        with pytest.raises(paramiko.SSHException):
+            client.connect("127.0.0.1", port=server.port, username="alice", password=PASSWORD, look_for_keys=False, allow_agent=False)
+        client.close()
+
+        assert not login(PASSWORD, "000000" if totp.code(secret) != "000000" else "111111")
+        assert not login("wrong", totp.code(secret))
+        good = totp.code(secret)
+        assert login(PASSWORD, good)
+        assert not login(PASSWORD, good)  # the same code cannot be used twice
+    finally:
+        server.stop()
+
+
+def test_totp_matches_rfc_6238_vectors():
+    import base64
+
+    from fta.crypto import totp
+
+    secret = base64.b32encode(b"12345678901234567890").decode()
+    # RFC 6238 appendix B (SHA-1), last six digits
+    for at, expected in [(59, "287082"), (1111111109, "081804"), (1234567890, "005924"), (2000000000, "279037")]:
+        assert totp.code(secret, at) == expected
+    verifier = totp.Verifier(secret)
+    assert verifier.check("287 082", at=59 + 30)  # one step of clock drift is fine
+    assert not verifier.check("287082", at=59 + 30)  # but only once
+    assert not verifier.check("12345", at=59)
+    uri = totp.provisioning_uri(secret, "fta@laptop")
+    assert uri.startswith("otpauth://totp/File%20Transfer%20for%20All%3Afta%40laptop?secret=")

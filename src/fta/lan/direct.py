@@ -40,6 +40,7 @@ from fta.core.errors import AccessDenied, IntegrityError, TransferError
 from fta.core.manager import FileResult
 from fta.lan.identity import Identity, certificate_fingerprint
 from fta.lan.links import DEFAULT_PORT
+from fta.lan.shares import Share, ShareRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,8 @@ class Receiver:
         self.host = host
         self.port = port
         self.offers: dict[str, Offer] = {}
+        self.shares = ShareRegistry()
+        """Links that give a file away (``/s/<token>``), served by this same HTTPS server."""
         self._lock = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -209,8 +212,10 @@ class Receiver:
 
     # --- request handling (called from handler threads) --------------------------------
 
-    def _offer(self, body: dict[str, Any], address: str) -> tuple[int, dict[str, Any]]:
-        sender = body.get("sender") or {}
+    def _offer(self, body: Any, address: str) -> tuple[int, dict[str, Any]]:
+        if not isinstance(body, dict):
+            return 400, {"error": "an offer is a JSON object"}
+        sender = body.get("sender") if isinstance(body.get("sender"), dict) else {}
         raw_files = body.get("files")
         if not isinstance(raw_files, list) or not raw_files or len(raw_files) > MAX_FILES:
             return 400, {"error": "no files"}
@@ -366,6 +371,46 @@ def _make_handler(receiver: Receiver) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+        def _page(self, status: int, title: str, text: str) -> None:
+            body = (
+                f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                f"<title>{title}</title><body style='font-family:sans-serif;margin:3em'>"
+                f"<h2>{title}</h2><p>{text}</p></body>"
+            ).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_share(self, share: Share) -> None:
+            from urllib.parse import quote
+
+            name = share.name
+            disposition = f"attachment; filename*=UTF-8''{quote(name)}"
+            self.send_response(200)
+            self.send_header("Content-Disposition", disposition)
+            self.send_header("Cache-Control", "no-store")
+            if share.path.is_dir():
+                import zipfile
+
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Connection", "close")  # size unknown until the zip is built
+                self.end_headers()
+                self.close_connection = True
+                with zipfile.ZipFile(self.wfile, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for path in sorted(share.path.rglob("*")):
+                        if path.is_file():
+                            archive.write(path, path.relative_to(share.path.parent).as_posix())
+            else:
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(share.path.stat().st_size))
+                self.end_headers()
+                with share.path.open("rb") as fp:
+                    while chunk := fp.read(_CHUNK):
+                        self.wfile.write(chunk)
+            logger.info("shared %s with %s", share.path, self.client_address[0])
+
         def _route(self, method: str) -> None:
             url = urlsplit(self.path)
             query = parse_qs(url.query)
@@ -387,6 +432,12 @@ def _make_handler(receiver: Receiver) -> type[BaseHTTPRequestHandler]:
                         self._reply(411, {"error": "Content-Length required"})
                         return
                     self._reply(200, receiver._receive(query, length, self.rfile))
+                elif method == "GET" and url.path.startswith("/s/"):
+                    share = receiver.shares.claim(url.path[3:])
+                    if share is None:
+                        self._page(410, "Ссылка больше не действует", "Она была одноразовой, истекла или её отозвали.")
+                    else:
+                        self._send_share(share)
                 elif method == "POST" and url.path == "/api/done":
                     self._reply(200, receiver._done(query))
                 else:
@@ -400,6 +451,10 @@ def _make_handler(receiver: Receiver) -> type[BaseHTTPRequestHandler]:
                 self.close_connection = True  # the body may not have been read
             except (ConnectionError, ssl.SSLError, TimeoutError, OSError) as exc:
                 logger.info("transfer from %s interrupted: %s", self.client_address[0], exc)
+                self.close_connection = True
+            except Exception:  # a bug must answer 500, not drop the connection silently
+                logger.exception("request %s %s from %s failed", method, url.path, self.client_address[0])
+                self._reply(500, {"error": "internal error"})
                 self.close_connection = True
 
         def do_GET(self) -> None:

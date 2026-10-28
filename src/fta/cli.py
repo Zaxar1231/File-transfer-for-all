@@ -314,6 +314,80 @@ def _cloud(args: argparse.Namespace) -> int:
     return 0
 
 
+def _passphrase(confirm: bool) -> str:
+    password = getpass.getpass("Passphrase: ")
+    if confirm and password != getpass.getpass("Repeat: "):
+        raise ValueError("passphrases do not match")
+    if not password:
+        raise ValueError("empty passphrase")
+    return password
+
+
+def _my_age_key() -> str:
+    """This device's age secret key (the same one the app uses), created on first use."""
+    from fta.crypto import age
+
+    path = default_data_dir() / "age_identity.txt"
+    try:
+        return path.read_text().strip().splitlines()[-1]
+    except (OSError, IndexError):
+        identity = age.Identity.generate()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# public key: {identity.recipient}\n{identity}\n")
+        path.chmod(0o600)
+        return str(identity)
+
+
+def _encrypt(args: argparse.Namespace) -> int:
+    from fta.crypto import age
+
+    options = {"recipients": args.recipient} if args.recipient else {"passphrase": _passphrase(confirm=True)}
+    for name in args.files:
+        print(age.encrypt_file(Path(name), **options))
+    return 0
+
+
+def _decrypt(args: argparse.Namespace) -> int:
+    from fta.crypto import age
+
+    identities = [Path(f).read_text().strip().splitlines()[-1] for f in args.identity] + [_my_age_key()]
+    passphrase = None
+    for name in args.files:
+        try:
+            print(age.decrypt_file(Path(name), identities=identities, passphrase=passphrase))
+        except age.AgeError as exc:
+            if "passphrase" not in str(exc) or passphrase:
+                raise
+            passphrase = _passphrase(confirm=False)
+            print(age.decrypt_file(Path(name), identities=identities, passphrase=passphrase))
+    return 0
+
+
+def _share(args: argparse.Namespace) -> int:
+    from fta.app.storage import Store
+    from fta.lan.links import local_address, qr_text
+
+    seconds = {"m": 60, "h": 3600, "d": 86400}[args.ttl[-1]] * int(args.ttl[:-1])
+    service = _lan(Store(), port=args.port)
+    service.discover = False
+    service.start()
+    url, share = service.share(Path(args.path), seconds, not args.many, local_address())
+    print(f"Link ({'one download' if share.one_time else 'any number of downloads'}, valid {args.ttl}):")
+    print(url)
+    print(qr_text(url))
+    print("The browser warns about the certificate: it is this device's own. Stop with Ctrl+C.")
+    try:
+        while share.active:
+            time.sleep(0.5)
+        time.sleep(2)  # let a running download finish
+        print(f"Link {share.status()}.")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        service.stop()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fta", description="Transfer files over any supported protocol.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -353,6 +427,20 @@ def build_parser() -> argparse.ArgumentParser:
     cloud.add_argument("name", nargs="?", help="name for the cloud, used as rclone://NAME/")
     cloud.add_argument("type", nargs="?", help="drive, dropbox, yandex, onedrive, mailru, webdav, …")
     cloud.add_argument("params", nargs="*", type=_key_value, metavar="KEY=VALUE", help="e.g. user=me pass=secret")
+
+    encrypt = commands.add_parser("encrypt", help="encrypt files to FILE.age (age format; asks for a passphrase)")
+    encrypt.add_argument("files", nargs="+", metavar="FILE")
+    encrypt.add_argument("-r", "--recipient", action="append", default=[], help="age1… public key instead of a passphrase")
+    decrypt = commands.add_parser("decrypt", help="decrypt FILE.age (with this device's key or a passphrase)")
+    decrypt.add_argument("files", nargs="+", metavar="FILE")
+    decrypt.add_argument("-i", "--identity", action="append", default=[], help="file with an AGE-SECRET-KEY-1…")
+    commands.add_parser("keygen", help="show this device's age public key, for others to encrypt to")
+
+    share = commands.add_parser("share", help="give a file or folder away by a one-time link and QR code")
+    share.add_argument("path")
+    share.add_argument("--ttl", default="1h", help="how long the link works: 10m, 1h, 1d (default 1h)")
+    share.add_argument("--many", action="store_true", help="allow more than one download until it expires")
+    share.add_argument("--port", type=int, default=0, help="port (default: any free one)")
 
     peers = commands.add_parser("peers", help="list FTA devices on the local network")
     peers.add_argument("--wait", type=float, default=3, help="seconds to listen (default 3)")
@@ -420,6 +508,16 @@ def _run(args: argparse.Namespace) -> int:
             return _peers(args)
         elif args.command == "cloud":
             return _cloud(args)
+        elif args.command == "encrypt":
+            return _encrypt(args)
+        elif args.command == "decrypt":
+            return _decrypt(args)
+        elif args.command == "keygen":
+            from fta.crypto import age
+
+            print(age.Identity.parse(_my_age_key()).recipient)
+        elif args.command == "share":
+            return _share(args)
         elif args.command == "history":
             journal = _journal()
             if args.csv:
@@ -444,7 +542,7 @@ def _run(args: argparse.Namespace) -> int:
                     transport.delete(path)
     except hostkeys.UnknownHostKey:
         raise
-    except (TransferError, OSError) as exc:
+    except (TransferError, OSError, ValueError) as exc:
         print(f"fta: error: {exc}", file=sys.stderr)
         return 1
     return 0

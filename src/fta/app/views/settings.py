@@ -75,6 +75,7 @@ class SettingsView:
         self._render_swatches()
         self._build_server_controls()
         self._build_lan_controls()
+        self._build_security_controls()
 
         self.view = ft.Column(
             [
@@ -129,6 +130,19 @@ class SettingsView:
                                 wrap=True,
                             ),
                             self.server_status,
+                        ),
+                        _section(
+                            "Безопасность",
+                            ft.Text("Мой ключ шифрования — дайте его тем, кто шифрует файлы для вас (age):"),
+                            ft.Row(
+                                [
+                                    self.age_key,
+                                    ft.IconButton(ft.Icons.COPY, tooltip="Скопировать", on_click=self._copy_age_key),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            self.totp_switch,
+                            self.totp_status,
                         ),
                         _section(
                             "Обновления",
@@ -217,6 +231,100 @@ class SettingsView:
             self.receive_dir_text.value = path
             self.app.store.save()
             self.app.apply_lan()
+
+    # --- security ------------------------------------------------------------------------
+
+    def _build_security_controls(self) -> None:
+        from fta.app.views.security import my_identity
+
+        settings = self.app.store.settings
+        self.age_key = ft.Text(my_identity(self.app).recipient, selectable=True, expand=True, font_family="FtaMono", size=12)
+        self.totp_switch = ft.Switch(
+            label="Двухфакторный вход в SSH-сервер (пароль + код из приложения-аутентификатора)",
+            value=bool(settings.server_totp_secret),
+            on_change=self._on_totp_switch,
+        )
+        self.totp_status = ft.Text(theme_style=ft.TextThemeStyle.BODY_SMALL, color=ft.Colors.ON_SURFACE_VARIANT)
+        self._show_totp_status()
+
+    def _show_totp_status(self) -> None:
+        on = bool(self.app.store.settings.server_totp_secret)
+        self.totp_status.value = (
+            "Включён: PuTTY и ssh спросят пароль и код. Вход по ключам из authorized_keys — без кода."
+            if on
+            else "Выключен"
+        )
+        safe_update(self.totp_status)
+
+    async def _copy_age_key(self, e: ft.Event[ft.IconButton]) -> None:
+        await self.app.clipboard.set(self.age_key.value or "")
+        self.app.notify("Ключ скопирован")
+
+    def _on_totp_switch(self, e: ft.Event[ft.Switch]) -> None:
+        settings = self.app.store.settings
+        if not e.control.value:
+            settings.server_totp_secret = ""
+            self.app.store.save()
+            self.app.apply_server()
+            self._show_totp_status()
+            return
+        e.control.value = False  # stays off until a code proves the app is set up
+        safe_update(e.control)
+        self._enroll_totp()
+
+    def _enroll_totp(self) -> None:
+        from fta.crypto import totp
+        from fta.lan.links import qr_png
+
+        secret = totp.new_secret()
+        account = f"{self.app.store.settings.server_user}@{self.app.lan.identity.name if self.app.lan else 'FTA'}"
+        code = ft.TextField(label="Код из приложения", width=180, keyboard_type=ft.KeyboardType.NUMBER, max_length=6, autofocus=True)
+        verifier = totp.Verifier(secret)
+
+        def confirm(_: ft.Event[ft.Control]) -> None:
+            if not verifier.check(code.value or ""):
+                code.error = "Неверный код — проверьте время на телефоне"
+                safe_update(code)
+                return
+            self.app.store.settings.server_totp_secret = secret
+            self.app.store.save()
+            self.app.page.pop_dialog()
+            self.totp_switch.value = True
+            safe_update(self.totp_switch)
+            self._show_totp_status()
+            self.app.apply_server()
+            self.app.notify("Двухфакторный вход включён")
+
+        code.on_submit = confirm
+        self.app.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                icon=ft.Icon(ft.Icons.PHONELINK_LOCK),
+                title=ft.Text("Двухфакторный вход"),
+                content=ft.Column(
+                    [
+                        ft.Text("Отсканируйте QR-код в Google Authenticator, Aegis, 1Password или другом приложении:"),
+                        ft.Container(
+                            ft.Image(src=qr_png(totp.provisioning_uri(secret, account)), width=200, height=200),
+                            bgcolor=ft.Colors.WHITE,
+                            border_radius=12,
+                            padding=6,
+                            alignment=ft.Alignment.CENTER,
+                        ),
+                        ft.Text(f"Или введите ключ вручную: {secret}", selectable=True, theme_style=ft.TextThemeStyle.BODY_SMALL),
+                        code,
+                    ],
+                    tight=True,
+                    spacing=12,
+                    width=420,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                actions=[
+                    ft.TextButton("Отмена", on_click=lambda e: self.app.page.pop_dialog()),
+                    ft.FilledButton("Включить", on_click=confirm),
+                ],
+            )
+        )
 
     # --- SSH server ----------------------------------------------------------------------
 

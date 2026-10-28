@@ -117,6 +117,8 @@ class Settings:
     server_user: str = "fta"
     server_password_hash: str = ""
     """PBKDF2 hash (fta.server.passwords); the password itself is never stored."""
+    server_totp_secret: str = ""
+    """Two-factor login for the SSH server: the authenticator app's secret (base32)."""
     device_name: str = ""
     """How this device appears to others nearby; empty means the computer's name."""
     lan_enabled: bool = True
