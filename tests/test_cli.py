@@ -121,3 +121,17 @@ def test_share_command_serves_one_download(tmp_path, monkeypatch):
         if process.poll() is None:
             process.send_signal(signal.SIGINT)
             process.wait(10)
+
+
+def test_man_page_is_up_to_date():
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "make_man.py"
+    spec = importlib.util.spec_from_file_location("make_man", script)
+    make_man = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(make_man)
+    page = make_man.render()
+    for command in ("cp", "sync", "serve", "send", "receive", "cloud", "encrypt", "share", "stats"):
+        assert f".SS {command}" in page
+    assert make_man.PAGE.read_text(encoding="utf-8") == page, "run: python scripts/make_man.py"

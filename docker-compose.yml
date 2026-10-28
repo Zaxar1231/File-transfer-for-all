@@ -1,0 +1,65 @@
+# Real servers for the integration tests (tests/test_integration.py):
+#
+#   docker compose up -d --wait
+#   FTA_IT=1 pytest tests/test_integration.py
+#   docker compose down
+#
+# HUB picks the registry, e.g. HUB=mirror.gcr.io when Docker Hub rate-limits you.
+# Every server uses user "fta" with password "secret" and listens on localhost only.
+# Health checks use 127.0.0.1, not localhost: on hosts with IPv6 that name is ::1
+# inside the containers, and vsftpd listens on IPv4 only.
+
+services:
+  sftp:  # OpenSSH
+    image: ${HUB:-docker.io}/atmoz/sftp:alpine
+    command: fta:secret:1001::upload
+    ports: ["127.0.0.1:2222:22"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      interval: 2s
+      retries: 30
+
+  ftp:  # vsftpd
+    image: ${HUB:-docker.io}/delfer/alpine-ftp-server:latest
+    environment:
+      USERS: "fta|secret|/home/fta|1001"
+      ADDRESS: 127.0.0.1
+      MIN_PORT: "21000"
+      MAX_PORT: "21010"
+    ports: ["127.0.0.1:2121:21", "127.0.0.1:21000-21010:21000-21010"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 21"]
+      interval: 2s
+      retries: 30
+
+  webdav:  # Apache mod_dav
+    image: ${HUB:-docker.io}/bytemark/webdav:latest
+    environment:
+      AUTH_TYPE: Basic
+      USERNAME: fta
+      PASSWORD: secret
+    ports: ["127.0.0.1:8080:80"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80"]
+      interval: 2s
+      retries: 30
+
+  samba:
+    image: ${HUB:-docker.io}/dperson/samba:latest
+    command: -u "fta;secret" -s "share;/share;yes;no;no;fta" -p
+    ports: ["127.0.0.1:1445:445"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 445"]
+      interval: 2s
+      retries: 30
+
+  s3:  # S3 API
+    image: ${HUB:-docker.io}/adobe/s3mock:latest
+    environment:
+      initialBuckets: fta-bucket  # s3mock 2.x
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: fta-bucket  # s3mock 3.x and later
+    ports: ["127.0.0.1:9090:9090"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9090/ || exit 1"]
+      interval: 2s
+      retries: 60

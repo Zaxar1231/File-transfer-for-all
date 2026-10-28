@@ -33,6 +33,29 @@ jobs:
       - name: Test
         run: pytest -v --durations=10
 
+  integration:
+    # Real servers from docker-compose.yml: OpenSSH, vsftpd, Apache WebDAV, Samba, S3.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Start servers
+        run: docker compose up -d --wait
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Integration tests
+        run: FTA_IT=1 pytest -v tests/test_integration.py
+      - name: Server logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop servers
+        if: always()
+        run: docker compose down
+
   audit:
     # Known vulnerabilities in the app's dependencies (PyPI advisory database).
     runs-on: ubuntu-latest
